@@ -1,0 +1,125 @@
+
+{
+  "role_name": "Generative AI Engineer",
+
+  "role_details": "A Generative AI Engineer designs, develops, integrates and deploys AI-powered applications using large language models, retrieval augmented generation, embeddings, vector databases and AI agents. The role involves building reliable, scalable and secure generative AI systems.",
+
+  "technologies": [
+    "Python",
+    "FastAPI",
+    "Large Language Models",
+    "OpenAI API",
+    "LangChain",
+    "LangGraph",
+    "Hugging Face",
+    "PyTorch",
+    "Embeddings",
+    "Vector Databases",
+    "FAISS",
+    "Pinecone",
+    "RAG",
+    "Docker",
+    "PostgreSQL"
+  ],
+
+  "questions": {
+    "easy": [
+      {
+        "question": "You are developing a Python application that uses an LLM API to generate responses. The API occasionally becomes unavailable. How would you design the application to handle these failures without interrupting the user experience?"
+      },
+      {
+        "question": "Your team has developed a chatbot that frequently produces responses unrelated to the user's question. How would you investigate the issue and improve the chatbot's response quality?"
+      },
+      {
+        "question": "You are building an AI application that processes PDF documents. Some documents contain hundreds of pages. How would you prepare these documents before sending their content to an LLM?"
+      },
+      {
+        "question": "Your application needs to process multiple user requests simultaneously. How would you design the Python backend to handle concurrent LLM API calls?"
+      },
+      {
+        "question": "A chatbot takes several seconds to generate a response, and users are becoming frustrated. What techniques would you investigate to reduce response latency?"
+      },
+      {
+        "question": "You have been asked to build an AI assistant that answers questions using company documents. How would you approach the initial implementation?"
+      },
+      {
+        "question": "Your application uses an external LLM provider, and the provider changes its API response format. How would you structure your integration to make future provider changes easier?"
+      },
+      {
+        "question": "You are developing a chatbot that needs to remember information from previous conversations. How would you approach storing and retrieving conversation context?"
+      },
+      {
+        "question": "Your AI application occasionally returns empty or malformed responses. How would you identify and handle these situations in the backend?"
+      },
+      {
+        "question": "Your team wants to deploy a Python-based AI application on a cloud server. How would you package the application and manage its environment-specific configuration?"
+      }
+    ],
+
+    "medium": [
+      {
+        "question": "Your RAG application retrieves documents that appear relevant, but the generated answers frequently omit important information. How would you investigate and improve the retrieval pipeline?"
+      },
+      {
+        "question": "An enterprise chatbot uses a vector database containing thousands of documents. As the document collection grows, retrieval quality starts declining. How would you diagnose and address the problem?"
+      },
+      {
+        "question": "Your LLM application produces inconsistent answers for identical questions. How would you investigate the causes and improve response consistency?"
+      },
+      {
+        "question": "You are developing a RAG system that must retrieve information from documents containing tables, images and structured text. How would you design the document processing pipeline?"
+      },
+      {
+        "question": "Your application uses a large language model that frequently exceeds its context window when processing lengthy conversations. How would you manage conversation history and context efficiently?"
+      },
+      {
+        "question": "A production chatbot experiences increased API costs after its user base grows significantly. How would you investigate the cost drivers and optimize the system?"
+      },
+      {
+        "question": "Your organization wants to support multiple LLM providers without changing the business logic of the application. How would you design a provider-independent integration layer?"
+      },
+      {
+        "question": "Your RAG application retrieves outdated documents even though newer versions have been uploaded. How would you design document versioning, indexing and retrieval to prevent this?"
+      },
+      {
+        "question": "Your team has deployed an AI assistant using FastAPI, but simultaneous requests are causing increased latency and occasional failures. How would you investigate and improve backend performance?"
+      },
+      {
+        "question": "Your AI application needs to retrieve information from different departments while preventing users from accessing documents they are not authorized to view. How would you implement secure retrieval?"
+      }
+    ],
+
+    "hard": [
+      {
+        "question": "You are responsible for deploying an enterprise RAG assistant serving thousands of concurrent users. How would you architect the system to balance retrieval accuracy, inference latency, scalability, reliability and operational cost?"
+      },
+      {
+        "question": "Your production RAG system suddenly experiences a significant decline in answer accuracy after a document ingestion pipeline update. How would you investigate the regression, identify its root cause and prevent similar failures?"
+      },
+      {
+        "question": "You are designing a multi-agent AI system where several agents independently retrieve information, execute tools and collaborate to complete complex tasks. How would you design orchestration, state management, failure recovery and observability?"
+      },
+      {
+        "question": "An enterprise AI assistant must process confidential documents while protecting against prompt injection attacks embedded in retrieved content. How would you design the security architecture?"
+      },
+      {
+        "question": "Your organization wants to deploy an LLM application across multiple cloud regions with high availability. How would you design the infrastructure, model routing, data synchronization and disaster recovery strategy?"
+      },
+      {
+        "question": "A RAG application has acceptable retrieval metrics but poor end-to-end answer quality. How would you establish an evaluation framework that independently measures retrieval quality, generation quality and factual grounding?"
+      },
+      {
+        "question": "Your AI application experiences sudden traffic spikes that exceed the available LLM provider rate limits. How would you design request scheduling, queuing, backpressure and graceful degradation?"
+      },
+      {
+        "question": "You are building an AI platform that supports multiple customers, each with independent document collections and access policies. How would you design multi-tenant data isolation, vector indexing and authorization?"
+      },
+      {
+        "question": "Your production AI system needs continuous monitoring because model behavior, document distributions and user requirements change over time. How would you implement an MLOps-style lifecycle for evaluation, deployment, monitoring and rollback?"
+      },
+      {
+        "question": "Your company wants to replace an expensive hosted LLM with a self-hosted open-source model. How would you evaluate the migration, including hardware requirements, inference throughput, quantization, quality regression and operational complexity?"
+      }
+    ]
+  }
+}
