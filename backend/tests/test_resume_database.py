@@ -1,4 +1,3 @@
-
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -12,6 +11,7 @@ from backend.app.database.resume_database import (
 )
 from backend.app.database.resume_models import (
     CandidateResume,
+    EvaluationReport,
     GuestCandidate,
     InterviewSessionRecord,
     InterviewTranscriptMessage,
@@ -37,10 +37,12 @@ def test_resume_database_creates_expected_tables(tmp_path):
             "candidate_resumes",
             "interview_sessions",
             "interview_transcript_messages",
+            "evaluation_reports",
         }
 
         assert database_path.exists()
         assert not (tmp_path / "role_question_bank.db").exists()
+
     finally:
         engine.dispose()
 
@@ -97,10 +99,12 @@ def test_candidate_resume_and_interview_relationships(tmp_path):
 
             assert saved_interview.candidate.id == candidate_id
             assert saved_interview.resume.id == resume_id
+
             assert (
                 saved_interview.resume.raw_text
                 == "Candidate resume raw text."
             )
+
             assert (
                 saved_interview.resume.structured_data["skills"]
                 == ["Python", "FastAPI"]
@@ -166,15 +170,19 @@ def test_interview_state_persists_after_database_reconnection(tmp_path):
             assert saved.current_main_question_id == "question_12"
             assert saved.used_main_question_ids == ["question_12"]
             assert saved.follow_up_count == 1
+
             assert saved.completed_question_ids == [
                 "question_10",
                 "question_11",
             ]
+
             assert saved.completed_stages == ["introduction"]
+
             assert saved.structured_memory["topics_discussed"] == [
                 "Python",
                 "RAG",
             ]
+
             assert saved.started_at is not None
             assert saved.ended_at is None
 
@@ -238,12 +246,17 @@ def test_transcript_persists_separately_from_structured_memory(tmp_path):
 
         # Retrieve the transcript independently after reopening the session.
         with Session(engine) as db:
-            saved_interview = db.get(InterviewSessionRecord, session_id)
+            saved_interview = db.get(
+                InterviewSessionRecord,
+                session_id,
+            )
 
             saved_messages = (
                 db.query(InterviewTranscriptMessage)
                 .filter_by(interview_session_id=session_id)
-                .order_by(InterviewTranscriptMessage.sequence_number)
+                .order_by(
+                    InterviewTranscriptMessage.sequence_number
+                )
                 .all()
             )
 
@@ -251,11 +264,13 @@ def test_transcript_persists_separately_from_structured_memory(tmp_path):
             assert len(saved_messages) == 3
 
             assert [
-                message.sequence_number for message in saved_messages
+                message.sequence_number
+                for message in saved_messages
             ] == [1, 2, 3]
 
             assert [
-                message.speaker for message in saved_messages
+                message.speaker
+                for message in saved_messages
             ] == [
                 "interviewer",
                 "candidate",
@@ -263,7 +278,8 @@ def test_transcript_persists_separately_from_structured_memory(tmp_path):
             ]
 
             assert [
-                message.message_text for message in saved_messages
+                message.message_text
+                for message in saved_messages
             ] == [
                 "Tell me about yourself.",
                 "I am a computer science student.",
@@ -283,6 +299,264 @@ def test_transcript_persists_separately_from_structured_memory(tmp_path):
         engine.dispose()
 
 
+# =========================================================
+# MILESTONE 2.6 — EVALUATION REPORT PERSISTENCE
+# =========================================================
+
+def test_evaluation_report_persists_after_database_reconnection(
+    tmp_path,
+):
+    database_path = tmp_path / "interview_data.db"
+    engine = create_resume_engine(f"sqlite:///{database_path}")
+
+    candidate_id = str(uuid4())
+    resume_id = str(uuid4())
+    session_id = str(uuid4())
+    report_id = str(uuid4())
+
+    resume_report = {
+        "score": 8.2,
+        "strengths": [
+            {
+                "claim": "Python experience",
+                "evidence": "Python, FastAPI",
+            }
+        ],
+        "missing_or_weak_skills": [
+            "Deployment experience is not clearly evidenced."
+        ],
+        "experience_alignment": [],
+        "improvement_areas": [
+            "Provide more detail about deployment."
+        ],
+        "score_rationale": "Relevant backend experience is evidenced.",
+    }
+
+    interview_report = {
+        "score": 7.4,
+        "technical_strengths": [
+            "Explained the basic RAG architecture."
+        ],
+        "weak_or_incorrect_answers": [
+            "Retrieval evaluation was incomplete."
+        ],
+        "missing_concepts": [
+            "Precision and recall",
+        ],
+        "answer_by_answer_feedback": [
+            {
+                "question": "Explain RAG.",
+                "correctness": "partially_correct",
+                "feedback": "Explain the complete retrieval flow.",
+                "evidence": "A RAG application retrieves documents.",
+                "missing_concepts": ["Context construction"],
+            }
+        ],
+        "reasoning_and_justification": (
+            "The candidate demonstrated partial understanding."
+        ),
+        "recommendations": [
+            "Study retrieval evaluation metrics."
+        ],
+        "score_rationale": (
+            "The candidate demonstrated reasonable technical knowledge."
+        ),
+    }
+
+    try:
+        initialize_resume_database(target_engine=engine)
+
+        candidate = GuestCandidate(
+            id=candidate_id,
+            token_hash="e" * 64,
+        )
+
+        resume = CandidateResume(
+            id=resume_id,
+            candidate=candidate,
+            storage_key=f"{resume_id}.pdf",
+            original_filename="report-test.pdf",
+            mime_type="application/pdf",
+            size_bytes=1024,
+            raw_text="Private resume text.",
+            structured_data={
+                "skills": ["Python", "FastAPI"],
+                "projects": [],
+                "work_experience": [],
+                "education": [],
+                "certifications": [],
+            },
+        )
+
+        interview = InterviewSessionRecord(
+            id=session_id,
+            room_name="evaluation-report-test-room",
+            candidate=candidate,
+            resume=resume,
+            role_id="generative_ai_engineer",
+            status="completed",
+            current_stage="completed",
+            structured_memory={
+                "technical_interview": {
+                    "stage_complete": True,
+                    "completed_main_question_ids": [
+                        "question-001",
+                        "question-002",
+                        "question-003",
+                    ],
+                }
+            },
+        )
+
+        report = EvaluationReport(
+            id=report_id,
+            candidate_id=candidate_id,
+            interview_session_id=session_id,
+            resume_id=resume_id,
+            role_id="generative_ai_engineer",
+            completion_status="completed",
+            resume_score=8.2,
+            interview_score=7.4,
+            resume_report=resume_report,
+            interview_report=interview_report,
+        )
+
+        with Session(engine) as db:
+            db.add(interview)
+            db.flush()
+
+            db.add(report)
+            db.commit()
+
+        # Reopen the database to verify durable report persistence.
+        with Session(engine) as db:
+            saved_report = db.get(
+                EvaluationReport,
+                report_id,
+            )
+
+            assert saved_report is not None
+
+            assert saved_report.candidate_id == candidate_id
+            assert saved_report.interview_session_id == session_id
+            assert saved_report.resume_id == resume_id
+            assert saved_report.role_id == "generative_ai_engineer"
+
+            assert saved_report.completion_status == "completed"
+
+            # The two scores must remain separate.
+            assert saved_report.resume_score == 8.2
+            assert saved_report.interview_score == 7.4
+
+            assert saved_report.resume_report["score"] == 8.2
+            assert saved_report.interview_report["score"] == 7.4
+
+            assert (
+                saved_report.resume_report["strengths"][0]["claim"]
+                == "Python experience"
+            )
+
+            assert (
+                saved_report.interview_report[
+                    "missing_concepts"
+                ]
+                == ["Precision and recall"]
+            )
+
+    finally:
+        engine.dispose()
+
+
+def test_evaluation_report_session_association_is_unique(tmp_path):
+    database_path = tmp_path / "interview_data.db"
+    engine = create_resume_engine(f"sqlite:///{database_path}")
+
+    try:
+        initialize_resume_database(target_engine=engine)
+
+        candidate = GuestCandidate(
+            id=str(uuid4()),
+            token_hash="f" * 64,
+        )
+
+        resume = CandidateResume(
+            id=str(uuid4()),
+            candidate=candidate,
+            storage_key=f"{uuid4()}.pdf",
+            original_filename="unique-report.pdf",
+            mime_type="application/pdf",
+            size_bytes=512,
+            raw_text="Resume text.",
+            structured_data={"skills": ["Python"]},
+        )
+
+        interview = InterviewSessionRecord(
+            id=str(uuid4()),
+            room_name="unique-report-room",
+            candidate=candidate,
+            resume=resume,
+            role_id="generative_ai_engineer",
+            status="completed",
+        )
+
+        with Session(engine) as db:
+            db.add(interview)
+            db.flush()
+
+            first_report = EvaluationReport(
+                id=str(uuid4()),
+                candidate_id=candidate.id,
+                interview_session_id=interview.id,
+                resume_id=resume.id,
+                role_id="generative_ai_engineer",
+                completion_status="completed",
+                resume_score=8.0,
+                interview_score=7.0,
+                resume_report={"score": 8.0},
+                interview_report={"score": 7.0},
+            )
+
+            db.add(first_report)
+            db.commit()
+
+            duplicate_report = EvaluationReport(
+                id=str(uuid4()),
+                candidate_id=candidate.id,
+                interview_session_id=interview.id,
+                resume_id=resume.id,
+                role_id="generative_ai_engineer",
+                completion_status="completed",
+                resume_score=9.0,
+                interview_score=9.0,
+                resume_report={"score": 9.0},
+                interview_report={"score": 9.0},
+            )
+
+            db.add(duplicate_report)
+
+            try:
+                db.commit()
+                pytest.fail(
+                    "A second report for the same interview was accepted."
+                )
+
+            except Exception:
+                db.rollback()
+
+            saved_count = db.query(EvaluationReport).filter_by(
+                interview_session_id=interview.id
+            ).count()
+
+            assert saved_count == 1
+
+    finally:
+        engine.dispose()
+
+
+# =========================================================
+# LEGACY DATABASE MIGRATION
+# =========================================================
+
 def test_existing_interview_database_is_migrated_without_losing_records(
     tmp_path,
 ):
@@ -293,7 +567,7 @@ def test_existing_interview_database_is_migrated_without_losing_records(
     session_id = str(uuid4())
 
     try:
-        # Simulate the previous database schema before Milestone 2.3.
+        # Simulate the previous schema before the newer milestones.
         with engine.begin() as connection:
             connection.execute(
                 text(
@@ -349,17 +623,20 @@ def test_existing_interview_database_is_migrated_without_losing_records(
                 },
             )
 
-        # Initialize should add new columns and create the transcript table.
+        # Initialization adds missing columns and creates missing tables.
         initialize_resume_database(target_engine=engine)
 
         with Session(engine) as db:
-            saved = db.get(InterviewSessionRecord, session_id)
+            saved = db.get(
+                InterviewSessionRecord,
+                session_id,
+            )
 
             assert saved is not None
             assert saved.room_name == "old-interview-room"
             assert saved.candidate_id == candidate_id
 
-            # Existing rows receive safe defaults.
+            # Existing records receive safe defaults.
             assert saved.status == "created"
             assert saved.used_main_question_ids == []
             assert saved.follow_up_count == 0
@@ -372,13 +649,23 @@ def test_existing_interview_database_is_migrated_without_losing_records(
             assert saved.started_at is None
             assert saved.ended_at is None
 
-        # Running initialization a second time must be safe.
+        # Milestone 2.6 report table must also be created.
+        tables = set(inspect(engine).get_table_names())
+
+        assert "evaluation_reports" in tables
+        assert "interview_transcript_messages" in tables
+
+        # A second initialization must be safe.
         initialize_resume_database(target_engine=engine)
 
-        assert (
-            "interview_transcript_messages"
-            in inspect(engine).get_table_names()
-        )
+        with Session(engine) as db:
+            saved_again = db.get(
+                InterviewSessionRecord,
+                session_id,
+            )
+
+            assert saved_again is not None
+            assert saved_again.room_name == "old-interview-room"
 
     finally:
         engine.dispose()

@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState } from "react";
 import {
   Room,
@@ -18,11 +17,13 @@ import {
   dispatchPersistentInterview,
   endPersistentInterview,
   ensureGuest,
+  generateEvaluationReport,
   getInterviewTranscript,
   getResumeStatus,
   listInterviewSessions,
   replaceResume,
   uploadResume,
+  type EvaluationReport,
   type InterviewSession,
   type ResumeStatus,
   type TranscriptMessage,
@@ -53,6 +54,64 @@ interface InterimTranscript {
   text: string;
 }
 
+// =========================================================
+// SMALL REPORT COMPONENTS
+// =========================================================
+
+function ReportStringList({
+  items,
+  emptyMessage = "No specific items recorded.",
+}: {
+  items: string[];
+  emptyMessage?: string;
+}) {
+  if (!items || items.length === 0) {
+    return <p className="report-empty">{emptyMessage}</p>;
+  }
+
+  return (
+    <ul className="report-list">
+      {items.map((item, index) => (
+        <li key={`${index}-${item}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function EvidenceList({
+  items,
+  emptyMessage = "No evidence-backed items recorded.",
+}: {
+  items: Array<{
+    claim: string;
+    evidence: string;
+  }>;
+  emptyMessage?: string;
+}) {
+  if (!items || items.length === 0) {
+    return <p className="report-empty">{emptyMessage}</p>;
+  }
+
+  return (
+    <div className="evidence-list">
+      {items.map((item, index) => (
+        <div className="evidence-item" key={`${index}-${item.claim}`}>
+          <strong>{item.claim}</strong>
+          <blockquote>{item.evidence}</blockquote>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatScore(score: number): string {
+  return Number.isFinite(score) ? score.toFixed(1) : "—";
+}
+
+// =========================================================
+// MAIN APPLICATION
+// =========================================================
+
 function App() {
   const roomRef = useRef<Room | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -76,6 +135,18 @@ function App() {
   const [selectedHistoryId, setSelectedHistoryId] =
     useState<string | null>(null);
 
+  // Milestone 2.6 report state.
+  const [evaluationReport, setEvaluationReport] =
+    useState<EvaluationReport | null>(null);
+
+  const [reportSessionId, setReportSessionId] =
+    useState<string | null>(null);
+
+  const [reportBusySessionId, setReportBusySessionId] =
+    useState<string | null>(null);
+
+  const [reportError, setReportError] = useState("");
+
   const [connected, setConnected] = useState(false);
   const [starting, setStarting] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -92,6 +163,10 @@ function App() {
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // =======================================================
+  // APPLICATION INITIALIZATION
+  // =======================================================
 
   async function refreshSessions() {
     const result = await listInterviewSessions();
@@ -135,13 +210,21 @@ function App() {
     };
   }, []);
 
+  // =======================================================
+  // RESUME MANAGEMENT
+  // =======================================================
+
   async function handleResumeUpload(file?: File) {
     if (!file || resumeBusy) return;
 
     const allowedExtensions = [".pdf", ".doc", ".docx"];
     const fileName = file.name.toLowerCase();
 
-    if (!allowedExtensions.some((extension) => fileName.endsWith(extension))) {
+    if (
+      !allowedExtensions.some((extension) =>
+        fileName.endsWith(extension),
+      )
+    ) {
       setError("Please upload a PDF, DOC or DOCX resume.");
       return;
     }
@@ -173,7 +256,13 @@ function App() {
     }
   }
 
-  async function applyMicrophoneStatus(nextStatus: InterviewStatus) {
+  // =======================================================
+  // MICROPHONE CONTROL
+  // =======================================================
+
+  async function applyMicrophoneStatus(
+    nextStatus: InterviewStatus,
+  ) {
     const room = roomRef.current;
     if (!room) return;
 
@@ -196,7 +285,14 @@ function App() {
     }
   }
 
-  function handleInterviewEvent(payload: Uint8Array, topic?: string) {
+  // =======================================================
+  // LIVEKIT EVENTS
+  // =======================================================
+
+  function handleInterviewEvent(
+    payload: Uint8Array,
+    topic?: string,
+  ) {
     const event = parseInterviewEvent(payload, topic);
     if (!event) return;
 
@@ -251,7 +347,10 @@ function App() {
             setInterimTranscript({ speaker, text });
           }
         } catch (err) {
-          console.error("Failed to read interview transcription:", err);
+          console.error(
+            "Failed to read interview transcription:",
+            err,
+          );
         }
       },
     );
@@ -266,6 +365,10 @@ function App() {
 
     audioContainerRef.current?.appendChild(element);
   }
+
+  // =======================================================
+  // START INTERVIEW
+  // =======================================================
 
   async function startInterview() {
     if (starting || roomRef.current || !guestReady) return;
@@ -283,11 +386,15 @@ function App() {
     setStarting(true);
     setError("");
     setNotice("");
+    setReportError("");
 
     setTranscripts([]);
     setInterimTranscript(null);
     setHistoryTranscript([]);
     setSelectedHistoryId(null);
+
+    setEvaluationReport(null);
+    setReportSessionId(null);
 
     transcriptIdRef.current = 0;
     setMicrophoneEnabled(false);
@@ -394,6 +501,10 @@ function App() {
     }
   }
 
+  // =======================================================
+  // AUDIO PLAYBACK
+  // =======================================================
+
   async function enableAudioPlayback() {
     const room = roomRef.current;
     if (!room) return;
@@ -409,6 +520,10 @@ function App() {
       );
     }
   }
+
+  // =======================================================
+  // END INTERVIEW
+  // =======================================================
 
   async function endInterview() {
     if (ending) return;
@@ -460,6 +575,10 @@ function App() {
     setEnding(false);
   }
 
+  // =======================================================
+  // VIEW SAVED TRANSCRIPT
+  // =======================================================
+
   async function viewSavedTranscript(sessionId: string) {
     setError("");
     setNotice("");
@@ -480,6 +599,55 @@ function App() {
     }
   }
 
+  // =======================================================
+  // MILESTONE 2.6 — LOAD OR GENERATE EVALUATION
+  // =======================================================
+
+  async function openEvaluationReport(session: InterviewSession) {
+    if (reportBusySessionId) return;
+
+    if (session.status !== "completed") {
+      setReportError(
+        "An evaluation report is available only after all three "
+        + "main technical questions have been completed.",
+      );
+      return;
+    }
+
+    setReportBusySessionId(session.id);
+    setReportError("");
+    setError("");
+    setNotice("");
+
+    setSelectedHistoryId(session.id);
+    setHistoryTranscript([]);
+    setEvaluationReport(null);
+    setReportSessionId(null);
+
+    try {
+      // The backend returns the existing report when one is already saved.
+      // Otherwise it generates both evaluations and persists the result.
+      const report = await generateEvaluationReport(session.id);
+
+      setEvaluationReport(report);
+      setReportSessionId(session.id);
+
+      setNotice("Evaluation report loaded successfully.");
+    } catch (err) {
+      setReportError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load the evaluation report.",
+      );
+    } finally {
+      setReportBusySessionId(null);
+    }
+  }
+
+  // =======================================================
+  // INTERVIEW STATUS LABELS
+  // =======================================================
+
   const speakerLabel =
     status === "AI_SPEAKING"
       ? "AI SPEAKING"
@@ -494,6 +662,16 @@ function App() {
               : status === "INTERVIEW_ENDED"
                 ? "INTERVIEW ENDED"
                 : "WAITING";
+
+  // Only display a report when it belongs to the selected history session.
+  const visibleReport =
+    reportSessionId === selectedHistoryId
+      ? evaluationReport
+      : null;
+
+  // =======================================================
+  // APPLICATION UI
+  // =======================================================
 
   return (
     <main className="dashboard">
@@ -518,13 +696,19 @@ function App() {
         </section>
       ) : (
         <>
+          {/* =================================================
+              CANDIDATE SETUP
+          ================================================= */}
+
           <section className="interview-card">
             <h2>Candidate setup</h2>
 
             <div className="session-details">
               <div className="detail-row">
                 <span>Guest identity</span>
-                <strong>{guestReady ? "Ready" : "Not initialized"}</strong>
+                <strong>
+                  {guestReady ? "Ready" : "Not initialized"}
+                </strong>
               </div>
 
               <div className="detail-row">
@@ -581,6 +765,10 @@ function App() {
               Your resume is mandatory for every interview.
             </p>
           </section>
+
+          {/* =================================================
+              LIVE INTERVIEW
+          ================================================= */}
 
           <section className="interview-card">
             <div className="speaker-panel">
@@ -663,6 +851,10 @@ function App() {
             {notice && <p className="success-message">{notice}</p>}
           </section>
 
+          {/* =================================================
+              LIVE TRANSCRIPT
+          ================================================= */}
+
           <section className="transcript-card">
             <div className="transcript-heading">
               <div>
@@ -696,6 +888,10 @@ function App() {
             </div>
           </section>
 
+          {/* =================================================
+              INTERVIEW HISTORY
+          ================================================= */}
+
           <section className="transcript-card">
             <div className="transcript-heading">
               <div>
@@ -725,21 +921,48 @@ function App() {
                         {new Date(session.created_at).toLocaleString()}
                       </p>
 
-                      <span>{session.status}</span>
+                      <span className={`session-status ${session.status}`}>
+                        {session.status.replaceAll("_", " ")}
+                      </span>
                     </div>
 
-                    <button
-                      className="secondary-button"
-                      onClick={() => void viewSavedTranscript(session.id)}
-                      disabled={connected || starting}
-                    >
-                      View transcript
-                    </button>
+                    <div className="history-actions">
+                      <button
+                        className="secondary-button"
+                        onClick={() => void viewSavedTranscript(session.id)}
+                        disabled={connected || starting}
+                      >
+                        View transcript
+                      </button>
+
+                      {session.status === "completed" && (
+                        <button
+                          className="report-button"
+                          onClick={() => void openEvaluationReport(session)}
+                          disabled={
+                            reportBusySessionId !== null ||
+                            connected ||
+                            starting
+                          }
+                        >
+                          {reportBusySessionId === session.id
+                            ? "Loading report..."
+                            : "Open evaluation"}
+                        </button>
+                      )}
+
+                      {session.status === "interrupted" && (
+                        <span className="report-unavailable">
+                          No evaluation — interrupted
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
+            {/* Saved transcript */}
             {selectedHistoryId && (
               <div className="saved-transcript">
                 <h3>Saved transcript</h3>
@@ -759,6 +982,188 @@ function App() {
               </div>
             )}
           </section>
+
+          {/* =================================================
+              MILESTONE 2.6 — EVALUATION REPORT
+          ================================================= */}
+
+          {reportError && (
+            <section className="transcript-card">
+              <h2>Evaluation report</h2>
+              <p className="error-message">{reportError}</p>
+            </section>
+          )}
+
+          {visibleReport && (
+            <section className="transcript-card evaluation-card">
+              <div className="transcript-heading">
+                <div>
+                  <p className="eyebrow">CAREER ARENA EVALUATION</p>
+                  <h2>Interview evaluation report</h2>
+                  <p className="subtitle">
+                    Generated{" "}
+                    {new Date(
+                      visibleReport.created_at,
+                    ).toLocaleString()}
+                  </p>
+                </div>
+
+                <span className="completed-report-label">
+                  COMPLETED
+                </span>
+              </div>
+
+              {/* Separate scores */}
+              <div className="evaluation-scores">
+                <div className="evaluation-score-panel">
+                  <span>Resume suitability</span>
+                  <strong>
+                    {formatScore(visibleReport.resume_score)}
+                    <small>/ 10</small>
+                  </strong>
+                  <p>
+                    Alignment between your resume evidence and the selected role.
+                  </p>
+                </div>
+
+                <div className="evaluation-score-panel">
+                  <span>Interview performance</span>
+                  <strong>
+                    {formatScore(visibleReport.interview_score)}
+                    <small>/ 10</small>
+                  </strong>
+                  <p>
+                    Technical performance based on your interview answers.
+                  </p>
+                </div>
+              </div>
+
+              {/* Resume evaluation */}
+              <div className="report-section">
+                <p className="eyebrow">PART 1</p>
+                <h3>Resume suitability</h3>
+
+                <p className="report-rationale">
+                  {visibleReport.resume_report.score_rationale}
+                </p>
+
+                <h4>Strengths supported by resume evidence</h4>
+                <EvidenceList
+                  items={visibleReport.resume_report.strengths}
+                  emptyMessage="No verified strengths were returned."
+                />
+
+                <h4>Experience and project alignment</h4>
+                <EvidenceList
+                  items={visibleReport.resume_report.experience_alignment}
+                  emptyMessage="No evidence-backed alignment items were returned."
+                />
+
+                <h4>Missing or weakly evidenced skills</h4>
+                <ReportStringList
+                  items={
+                    visibleReport.resume_report.missing_or_weak_skills
+                  }
+                />
+
+                <h4>Resume improvement areas</h4>
+                <ReportStringList
+                  items={visibleReport.resume_report.improvement_areas}
+                />
+              </div>
+
+              {/* Interview evaluation */}
+              <div className="report-section">
+                <p className="eyebrow">PART 2</p>
+                <h3>Technical interview performance</h3>
+
+                <p className="report-rationale">
+                  {visibleReport.interview_report.score_rationale}
+                </p>
+
+                <h4>Technical strengths</h4>
+                <ReportStringList
+                  items={
+                    visibleReport.interview_report.technical_strengths
+                  }
+                />
+
+                <h4>Weak or incorrect answers</h4>
+                <ReportStringList
+                  items={
+                    visibleReport.interview_report.weak_or_incorrect_answers
+                  }
+                />
+
+                <h4>Missing technical concepts</h4>
+                <ReportStringList
+                  items={visibleReport.interview_report.missing_concepts}
+                />
+
+                {/* Answer-by-answer feedback */}
+                <h4>Answer-by-answer feedback</h4>
+
+                <div className="answer-feedback-list">
+                  {visibleReport.interview_report.answer_by_answer_feedback
+                    .map((answer, index) => (
+                      <article
+                        className="answer-feedback-item"
+                        key={`${index}-${answer.question}`}
+                      >
+                        <div className="answer-feedback-heading">
+                          <h5>
+                            Question {index + 1}: {answer.question}
+                          </h5>
+
+                          <span className={`correctness ${answer.correctness}`}>
+                            {answer.correctness.replaceAll("_", " ")}
+                          </span>
+                        </div>
+
+                        <p className="answer-assessment">
+                          {answer.assessment}
+                        </p>
+
+                        <p>{answer.feedback}</p>
+
+                        {answer.evidence && (
+                          <div className="answer-evidence">
+                            <span>Evidence from your answer</span>
+                            <blockquote>{answer.evidence}</blockquote>
+                          </div>
+                        )}
+
+                        {answer.missing_concepts.length > 0 && (
+                          <div className="answer-missing-concepts">
+                            <strong>Concepts to improve</strong>
+                            <ReportStringList
+                              items={answer.missing_concepts}
+                            />
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                </div>
+
+                <h4>Technical justification</h4>
+                <p className="report-rationale">
+                  {visibleReport.interview_report.reasoning_and_justification}
+                </p>
+
+                <h4>Recommendations</h4>
+                <ReportStringList
+                  items={
+                    visibleReport.interview_report.recommendations
+                  }
+                />
+              </div>
+
+              <p className="report-footer">
+                Resume suitability and interview performance are evaluated
+                separately. These scores are not combined.
+              </p>
+            </section>
+          )}
         </>
       )}
 

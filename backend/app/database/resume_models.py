@@ -2,6 +2,7 @@
 from sqlalchemy import (
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     JSON,
@@ -295,3 +296,31 @@ class InterviewTranscriptMessage(ResumeBase):
             name="uq_transcript_session_sequence",
         ),
     )
+
+
+class EvaluationReport(ResumeBase):
+    """Candidate-owned completed interview report with two independent scores."""
+
+    __tablename__ = "evaluation_reports"
+
+    id = Column(String(36), primary_key=True)
+    candidate_id = Column(
+        String(36), ForeignKey("guest_candidates.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    interview_session_id = Column(
+        String(36), ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    resume_id = Column(
+        String(36), ForeignKey("candidate_resumes.id", ondelete="RESTRICT"),
+        nullable=False, index=True,
+    )
+    role_id = Column(String(100), nullable=False, index=True)
+    completion_status = Column(String(30), nullable=False, default="completed")
+    resume_score = Column(Float, nullable=False)
+    interview_score = Column(Float, nullable=False)
+    resume_report = Column(JSON, nullable=False)
+    interview_report = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False,
+                        server_default=func.current_timestamp())

@@ -1,4 +1,3 @@
-
 from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -16,7 +15,20 @@ from backend.app.database.resume_models import (
 
 CREATED_STATUS = "created"
 ACTIVE_STATUS = "in_progress"
+
+# Kept for compatibility with sessions created by older versions.
 ENDED_STATUS = "ended"
+
+COMPLETED_STATUS = "completed"
+INTERRUPTED_STATUS = "interrupted"
+
+TERMINAL_STATUSES = {
+    ENDED_STATUS,
+    COMPLETED_STATUS,
+    INTERRUPTED_STATUS,
+}
+
+REQUIRED_MAIN_QUESTION_COUNT = 3
 
 ALLOWED_SPEAKERS = {
     "candidate",
@@ -40,6 +52,56 @@ class InterviewSessionValidationError(InterviewSessionError):
 
 def _utc_now():
     return datetime.now(timezone.utc)
+
+
+def _has_completed_technical_interview(
+    session: InterviewSessionRecord,
+) -> bool:
+    """
+    Confirm that the technical interview is genuinely complete.
+
+    A session must satisfy all three conditions:
+    1. Its current stage is completed.
+    2. The technical interview state explicitly marks the stage complete.
+    3. Exactly three distinct, non-empty main question IDs are completed.
+    """
+
+    if session.current_stage != "completed":
+        return False
+
+    memory = session.structured_memory
+
+    if not isinstance(memory, dict):
+        return False
+
+    technical_state = memory.get("technical_interview")
+
+    if not isinstance(technical_state, dict):
+        return False
+
+    if technical_state.get("stage_complete") is not True:
+        return False
+
+    completed_ids = technical_state.get(
+        "completed_main_question_ids"
+    )
+
+    if not isinstance(completed_ids, list):
+        return False
+
+    if len(completed_ids) != REQUIRED_MAIN_QUESTION_COUNT:
+        return False
+
+    if not all(
+        isinstance(question_id, str) and question_id.strip()
+        for question_id in completed_ids
+    ):
+        return False
+
+    if len(set(completed_ids)) != REQUIRED_MAIN_QUESTION_COUNT:
+        return False
+
+    return True
 
 
 def create_interview_session(
@@ -112,6 +174,7 @@ def create_interview_session(
         db.commit()
         db.refresh(session)
         return session
+
     except Exception:
         db.rollback()
         raise
@@ -131,7 +194,9 @@ def get_owned_interview_session(
     ).first()
 
     if session is None:
-        raise InterviewSessionNotFoundError("Interview session not found.")
+        raise InterviewSessionNotFoundError(
+            "Interview session not found."
+        )
 
     return session
 
@@ -145,8 +210,12 @@ def list_candidate_interview_sessions(
 
     return (
         db.query(InterviewSessionRecord)
-        .filter(InterviewSessionRecord.candidate_id == candidate_id)
-        .order_by(InterviewSessionRecord.created_at.desc())
+        .filter(
+            InterviewSessionRecord.candidate_id == candidate_id
+        )
+        .order_by(
+            InterviewSessionRecord.created_at.desc()
+        )
         .all()
     )
 
@@ -157,7 +226,7 @@ def mark_interview_started(
     session_id: str,
     candidate_id: str,
 ) -> InterviewSessionRecord:
-    """Start a created session. Repeated calls do not reset its timestamp."""
+    """Start a created session without resetting its timestamp on retries."""
 
     session = get_owned_interview_session(
         db,
@@ -165,7 +234,7 @@ def mark_interview_started(
         candidate_id=candidate_id,
     )
 
-    if session.status == ENDED_STATUS:
+    if session.status in TERMINAL_STATUSES:
         raise InterviewSessionValidationError(
             "An ended interview cannot be restarted."
         )
@@ -177,6 +246,7 @@ def mark_interview_started(
         try:
             db.commit()
             db.refresh(session)
+
         except Exception:
             db.rollback()
             raise
@@ -205,15 +275,32 @@ def update_interview_progress(
         candidate_id=candidate_id,
     )
 
-    if session.status == ENDED_STATUS:
+    if session.status in TERMINAL_STATUSES:
         raise InterviewSessionValidationError(
             "An ended interview cannot be modified."
         )
 
-    if follow_up_count is not None and follow_up_count < 0:
-        raise InterviewSessionValidationError(
-            "Follow-up count cannot be negative."
-        )
+    if follow_up_count is not None:
+        if (
+            isinstance(follow_up_count, bool)
+            or not isinstance(follow_up_count, int)
+            or follow_up_count < 0
+        ):
+            raise InterviewSessionValidationError(
+                "Follow-up count must be a non-negative integer."
+            )
+
+    if current_stage is not None:
+        if not isinstance(current_stage, str) or not current_stage.strip():
+            raise InterviewSessionValidationError(
+                "Current stage must be a non-empty string."
+            )
+
+    if current_main_question_id is not None:
+        if not isinstance(current_main_question_id, str):
+            raise InterviewSessionValidationError(
+                "Current main question ID must be a string."
+            )
 
     list_fields = {
         "used_main_question_ids": used_main_question_ids,
@@ -231,7 +318,8 @@ def update_interview_progress(
             )
 
     if structured_memory is not None and not isinstance(
-        structured_memory, dict
+        structured_memory,
+        dict,
     ):
         raise InterviewSessionValidationError(
             "Structured memory must be an object."
@@ -244,24 +332,31 @@ def update_interview_progress(
         session.current_main_question_id = current_main_question_id
 
     if used_main_question_ids is not None:
-        session.used_main_question_ids = list(used_main_question_ids)
+        session.used_main_question_ids = list(
+            used_main_question_ids
+        )
 
     if follow_up_count is not None:
         session.follow_up_count = follow_up_count
 
     if completed_question_ids is not None:
-        session.completed_question_ids = list(completed_question_ids)
+        session.completed_question_ids = list(
+            completed_question_ids
+        )
 
     if completed_stages is not None:
         session.completed_stages = list(completed_stages)
 
     if structured_memory is not None:
-        session.structured_memory = deepcopy(structured_memory)
+        session.structured_memory = deepcopy(
+            structured_memory
+        )
 
     try:
         db.commit()
         db.refresh(session)
         return session
+
     except Exception:
         db.rollback()
         raise
@@ -283,9 +378,14 @@ def append_transcript_message(
         candidate_id=candidate_id,
     )
 
-    if session.status == ENDED_STATUS:
+    if session.status in TERMINAL_STATUSES:
         raise InterviewSessionValidationError(
             "Cannot append transcript to an ended interview."
+        )
+
+    if not isinstance(speaker, str):
+        raise InterviewSessionValidationError(
+            "Transcript speaker must be a string."
         )
 
     normalized_speaker = speaker.strip().lower()
@@ -295,13 +395,18 @@ def append_transcript_message(
             "Unsupported transcript speaker."
         )
 
-    if not isinstance(message_text, str) or not message_text.strip():
+    if (
+        not isinstance(message_text, str)
+        or not message_text.strip()
+    ):
         raise InterviewSessionValidationError(
             "Transcript message cannot be empty."
         )
 
     current_max = db.query(
-        func.max(InterviewTranscriptMessage.sequence_number)
+        func.max(
+            InterviewTranscriptMessage.sequence_number
+        )
     ).filter(
         InterviewTranscriptMessage.interview_session_id == session_id
     ).scalar()
@@ -319,6 +424,7 @@ def append_transcript_message(
         db.commit()
         db.refresh(message)
         return message
+
     except Exception:
         db.rollback()
         raise
@@ -341,9 +447,12 @@ def get_interview_transcript(
     return (
         db.query(InterviewTranscriptMessage)
         .filter(
-            InterviewTranscriptMessage.interview_session_id == session_id
+            InterviewTranscriptMessage.interview_session_id
+            == session_id
         )
-        .order_by(InterviewTranscriptMessage.sequence_number.asc())
+        .order_by(
+            InterviewTranscriptMessage.sequence_number.asc()
+        )
         .all()
     )
 
@@ -354,7 +463,14 @@ def end_interview_session(
     session_id: str,
     candidate_id: str,
 ) -> InterviewSessionRecord:
-    """End a session. Repeated calls preserve the original end timestamp."""
+    """
+    End a session using strict completion criteria.
+
+    A genuinely completed interview becomes 'completed'.
+    Any other session becomes 'interrupted'.
+
+    The first ending timestamp is preserved on repeated requests.
+    """
 
     session = get_owned_interview_session(
         db,
@@ -362,15 +478,23 @@ def end_interview_session(
         candidate_id=candidate_id,
     )
 
-    if session.status != ENDED_STATUS:
-        session.status = ENDED_STATUS
+    # Preserve terminal states and the original timestamp.
+    if session.status in TERMINAL_STATUSES:
+        return session
+
+    if _has_completed_technical_interview(session):
+        session.status = COMPLETED_STATUS
+    else:
+        session.status = INTERRUPTED_STATUS
+
+    if session.ended_at is None:
         session.ended_at = _utc_now()
 
-        try:
-            db.commit()
-            db.refresh(session)
-        except Exception:
-            db.rollback()
-            raise
+    try:
+        db.commit()
+        db.refresh(session)
+        return session
 
-    return session
+    except Exception:
+        db.rollback()
+        raise

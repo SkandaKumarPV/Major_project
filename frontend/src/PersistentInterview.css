@@ -1,3 +1,6 @@
+/* =========================================================
+   FORM FIELDS
+========================================================= */
 
 .field-label {
   display: block;
@@ -20,11 +23,23 @@
   font: inherit;
 }
 
+.interview-card input:focus,
+.interview-card select:focus {
+  outline: none;
+  border-color: #315caa;
+  box-shadow: 0 0 0 3px rgb(49 92 170 / 10%);
+}
+
 .interview-card input:disabled,
 .interview-card select:disabled {
   opacity: 0.65;
   cursor: not-allowed;
 }
+
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
 
 .success-message {
   color: #16834b;
@@ -32,6 +47,18 @@
   margin-top: 12px;
   text-align: center;
 }
+
+.error-message {
+  color: #b33e3e;
+  font-size: 13px;
+  margin-top: 12px;
+  text-align: center;
+}
+
+
+/* =========================================================
+   INTERVIEW HISTORY
+========================================================= */
 
 .history-list {
   display: flex;
@@ -45,16 +72,33 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid #e1e5ec;
   border-radius: 10px;
   background: #fff;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.history-item:hover {
+  border-color: #cbd5e5;
+  box-shadow: 0 5px 16px rgb(28 39 60 / 4%);
+}
+
+.history-item > div:first-child {
+  min-width: 0;
 }
 
 .history-item p {
   margin: 6px 0;
   color: #778195;
   font-size: 13px;
+}
+
+.history-item > div:first-child > strong {
+  color: #283348;
+  font-size: 14px;
 }
 
 .history-item span {
@@ -68,6 +112,98 @@
   flex-shrink: 0;
 }
 
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-actions .secondary-button {
+  margin: 0;
+}
+
+
+/* =========================================================
+   SESSION STATUS
+========================================================= */
+
+.session-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 5px 9px;
+  border-radius: 20px;
+  font-size: 10px !important;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.session-status.created {
+  color: #52647d;
+  background: #edf1f7;
+}
+
+.session-status.in_progress {
+  color: #245ca3;
+  background: #eaf2ff;
+}
+
+.session-status.completed {
+  color: #16754d;
+  background: #e8f6ef;
+}
+
+.session-status.interrupted,
+.session-status.ended {
+  color: #9c4646;
+  background: #fbeeee;
+}
+
+.report-unavailable {
+  color: #929baa !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  text-transform: none !important;
+}
+
+
+/* =========================================================
+   HISTORY BUTTONS
+========================================================= */
+
+.report-button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid #315caa;
+  border-radius: 8px;
+  color: white;
+  background: #315caa;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    transform 150ms ease,
+    opacity 150ms ease;
+}
+
+.report-button:hover:not(:disabled) {
+  background: #244b91;
+  transform: translateY(-1px);
+}
+
+.report-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* =========================================================
+   SAVED TRANSCRIPT
+========================================================= */
+
 .saved-transcript {
   margin-top: 20px;
   padding-top: 16px;
@@ -77,12 +213,394 @@
 .saved-transcript h3 {
   margin-bottom: 14px;
   color: #202b40;
+  font-size: 16px;
 }
 
 .saved-transcript .transcript-line {
   padding: 10px 12px;
   border-radius: 8px;
   background: #f7f9fc;
+}
+
+
+/* =========================================================
+   MILESTONE 2.6 — EVALUATION REPORT
+========================================================= */
+
+.evaluation-card {
+  margin-bottom: 24px;
+}
+
+.evaluation-card .transcript-heading {
+  align-items: flex-start;
+}
+
+.completed-report-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 7px 11px;
+  border-radius: 20px;
+  color: #16754d !important;
+  background: #e8f6ef;
+  font-size: 10px !important;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   INDEPENDENT EVALUATION SCORES
+========================================================= */
+
+.evaluation-scores {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.evaluation-score-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid #e2e7f0;
+  border-radius: 12px;
+  background: #f8faff;
+}
+
+.evaluation-score-panel > span {
+  color: #65738a;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.evaluation-score-panel > strong {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 12px;
+  color: #244c8e;
+  font-size: 38px;
+  font-weight: 800;
+  letter-spacing: -1.5px;
+}
+
+.evaluation-score-panel > strong small {
+  color: #8992a1;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.evaluation-score-panel > p {
+  margin: 10px 0 0;
+  color: #778195;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* =========================================================
+   REPORT SECTIONS
+========================================================= */
+
+.report-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #e8ebf1;
+}
+
+.report-section h3 {
+  margin: 0 0 15px;
+  color: #202b40;
+  font-size: 20px;
+  font-weight: 750;
+}
+
+.report-section h4 {
+  margin: 24px 0 11px;
+  color: #354158;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.report-section h5 {
+  margin: 0;
+  color: #29354b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.report-rationale {
+  margin: 12px 0;
+  padding: 13px 15px;
+  border-left: 3px solid #91a8cd;
+  border-radius: 0 7px 7px 0;
+  background: #f7f9fc;
+  color: #536178;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.report-empty {
+  margin: 8px 0 0;
+  color: #939cac;
+  font-size: 12px;
+  font-style: italic;
+}
+
+
+/* =========================================================
+   REPORT LISTS
+========================================================= */
+
+.report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding-left: 22px;
+  color: #536178;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.report-list li {
+  padding-left: 3px;
+}
+
+.report-list li::marker {
+  color: #5476ad;
+}
+
+
+/* =========================================================
+   RESUME EVIDENCE
+========================================================= */
+
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.evidence-item {
+  padding: 14px;
+  border: 1px solid #e6eaf1;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.evidence-item > strong {
+  display: block;
+  color: #354158;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.evidence-item blockquote {
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid #a8b9d5;
+  border-radius: 0 6px 6px 0;
+  color: #6f7d93;
+  background: #f7f9fc;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+
+/* =========================================================
+   ANSWER-BY-ANSWER FEEDBACK
+========================================================= */
+
+.answer-feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.answer-feedback-item {
+  padding: 17px;
+  border: 1px solid #e4e8ef;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.answer-feedback-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.answer-feedback-heading h5 {
+  flex: 1;
+  min-width: 0;
+}
+
+.correctness {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 6px 9px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.correctness.technically_correct {
+  color: #16754d;
+  background: #e8f6ef;
+}
+
+.correctness.partially_correct {
+  color: #8b661d;
+  background: #fbf3df;
+}
+
+.correctness.incorrect {
+  color: #a23d3d;
+  background: #fbeaea;
+}
+
+.correctness.insufficient_evidence {
+  color: #64728a;
+  background: #edf1f6;
+}
+
+.answer-assessment {
+  margin: 13px 0 7px;
+  color: #536b91;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.answer-feedback-item > p:not(.answer-assessment) {
+  margin: 8px 0 0;
+  color: #5f6c81;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+
+/* =========================================================
+   CANDIDATE ANSWER EVIDENCE
+========================================================= */
+
+.answer-evidence {
+  margin-top: 16px;
+}
+
+.answer-evidence > span {
+  display: block;
+  margin-bottom: 8px;
+  color: #8791a1;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.answer-evidence blockquote {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid #9ab0d2;
+  border-radius: 0 7px 7px 0;
+  background: #f5f7fb;
+  color: #536178;
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.7;
+}
+
+
+/* =========================================================
+   MISSING CONCEPTS WITHIN EACH ANSWER
+========================================================= */
+
+.answer-missing-concepts {
+  margin-top: 15px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f4;
+}
+
+.answer-missing-concepts > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #536178;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.answer-missing-concepts .report-list {
+  font-size: 12px;
+}
+
+
+/* =========================================================
+   REPORT FOOTER
+========================================================= */
+
+.report-footer {
+  margin: 26px 0 0;
+  padding: 14px;
+  border-top: 1px solid #e8ebf1;
+  color: #7d889a;
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+
+/* =========================================================
+   BUTTON FOCUS AND ACCESSIBILITY
+========================================================= */
+
+.report-button:focus-visible,
+.history-actions button:focus-visible {
+  outline: 3px solid rgb(49 92 170 / 30%);
+  outline-offset: 3px;
+}
+
+
+/* =========================================================
+   RESPONSIVE DESIGN
+========================================================= */
+
+@media (max-width: 700px) {
+  .evaluation-scores {
+    grid-template-columns: 1fr;
+  }
+
+  .evaluation-score-panel {
+    padding: 18px;
+  }
+
+  .history-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .history-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .history-actions button {
+    flex: 1;
+  }
+
+  .history-item .secondary-button {
+    margin: 0;
+  }
 }
 
 @media (max-width: 600px) {
@@ -93,5 +611,39 @@
 
   .history-item .secondary-button {
     margin: 8px 0 0;
+  }
+
+  .history-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .history-actions button {
+    width: 100%;
+  }
+
+  .evaluation-card .transcript-heading {
+    flex-direction: column;
+  }
+
+  .completed-report-label {
+    align-self: flex-start;
+  }
+
+  .answer-feedback-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .correctness {
+    align-self: flex-start;
+  }
+
+  .report-section h3 {
+    font-size: 18px;
+  }
+
+  .evaluation-score-panel > strong {
+    font-size: 34px;
   }
 }
