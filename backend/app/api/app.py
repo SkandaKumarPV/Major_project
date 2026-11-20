@@ -8,8 +8,9 @@ from pydantic import BaseModel
 
 from backend.app.core.config import Settings
 from backend.app.services.livekit_service import LiveKitService
-
-
+from backend.app.api.guest import router as guest_router
+from backend.app.database.resume_database import initialize_resume_database
+from backend.app.api.resumes import router as resumes_router
 logger = logging.getLogger("ai-interviewer-api")
 
 
@@ -22,16 +23,16 @@ class InterviewSessionResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    initialize_resume_database()
+
     settings = Settings.from_environment()
     service = LiveKitService(settings)
-
     app.state.livekit_service = service
 
     try:
         yield
     finally:
         await service.close()
-
 
 app = FastAPI(
     title="Simple AI Interviewer API",
@@ -50,6 +51,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+app.include_router(guest_router)
+app.include_router(resumes_router)
 
 
 @app.get("/health")
