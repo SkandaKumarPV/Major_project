@@ -1,3 +1,4 @@
+
 import asyncio
 import uuid
 
@@ -5,11 +6,12 @@ from livekit.agents import llm
 
 
 class LiveKitLLM(llm.LLM):
-    """Adapts our configurable HTTP LLM provider to LiveKit Agents."""
+    """Adapts the HTTP LLM provider to LiveKit Agents."""
 
-    def __init__(self, provider):
+    def __init__(self, provider, response_handler=None):
         super().__init__()
         self.provider = provider
+        self.response_handler = response_handler
 
     @property
     def model(self) -> str:
@@ -37,7 +39,7 @@ class LiveKitLLM(llm.LLM):
 
 
 class LiveKitLLMStream(llm.LLMStream):
-    """Runs the HTTP request and emits its response as one chunk."""
+    """Generates one response for each committed candidate turn."""
 
     async def _run(self):
         candidate_answer = self._get_latest_user_message()
@@ -45,15 +47,21 @@ class LiveKitLLMStream(llm.LLMStream):
         if not candidate_answer.strip():
             raise ValueError("No candidate message found in chat context")
 
-        response_text = await asyncio.to_thread(
-            self._llm.provider.generate_response,
-            candidate_answer,
-        )
+        if self._llm.response_handler is not None:
+            response_text = await asyncio.to_thread(
+                self._llm.response_handler,
+                candidate_answer,
+            )
+        else:
+            response_text = await asyncio.to_thread(
+                self._llm.provider.generate_response,
+                candidate_answer,
+            )
 
-        if not response_text or not response_text.strip():
-            raise RuntimeError("LLM provider returned an empty response")
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise RuntimeError("LLM returned an empty response")
 
-        yield_chunk = llm.ChatChunk(
+        chunk = llm.ChatChunk(
             id=str(uuid.uuid4()),
             delta=llm.ChoiceDelta(
                 role="assistant",
@@ -61,30 +69,25 @@ class LiveKitLLMStream(llm.LLMStream):
             ),
         )
 
-        self._event_ch.send_nowait(yield_chunk)
+        self._event_ch.send_nowait(chunk)
 
     def _get_latest_user_message(self) -> str:
-        """Extracts the most recent candidate message from chat history."""
+        """Extract the latest candidate message from LiveKit chat history."""
 
         for item in reversed(self._chat_ctx.items):
-            role = getattr(item, "role", None)
-
-            if role != "user":
+            if getattr(item, "role", None) != "user":
                 continue
 
-            # Some LiveKit message types expose text_content.
             text_content = getattr(item, "text_content", None)
 
             if isinstance(text_content, str) and text_content.strip():
                 return text_content.strip()
 
-            # Other message types expose content directly.
             content = getattr(item, "content", None)
 
-            if isinstance(content, str):
+            if isinstance(content, str) and content.strip():
                 return content.strip()
 
-            # Handle a list of text/audio/image content items.
             if isinstance(content, list):
                 parts = []
 

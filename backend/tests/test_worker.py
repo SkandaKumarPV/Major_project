@@ -1,4 +1,3 @@
-
 from types import SimpleNamespace
 
 import pytest
@@ -8,17 +7,12 @@ from backend.app.agent import worker
 
 def test_prewarm_loads_vad(monkeypatch):
     expected_vad = object()
-
     fake_silero = SimpleNamespace(
-        VAD=SimpleNamespace(
-            load=lambda: expected_vad
-        )
+        VAD=SimpleNamespace(load=lambda: expected_vad)
     )
-
     monkeypatch.setattr(worker, "silero", fake_silero)
 
     proc = SimpleNamespace(userdata={})
-
     worker.prewarm(proc)
 
     assert proc.userdata["vad"] is expected_vad
@@ -30,46 +24,39 @@ def test_build_agent_session_uses_manual_turn_detection(monkeypatch):
     expected_provider = object()
     expected_llm = object()
     expected_vad = object()
-
-    settings = SimpleNamespace()
+    captured = {}
 
     monkeypatch.setattr(
         worker,
         "DeepgramService",
         lambda settings: SimpleNamespace(stt=expected_stt),
     )
-
     monkeypatch.setattr(
         worker,
         "CartesiaService",
         lambda settings: SimpleNamespace(tts=expected_tts),
     )
-
     monkeypatch.setattr(
         worker,
         "LLMProvider",
         lambda settings: expected_provider,
     )
-
     monkeypatch.setattr(
         worker,
         "LiveKitLLM",
         lambda provider: expected_llm,
     )
 
-    captured = {}
-
     class FakeAgentSession:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(
-        worker,
-        "AgentSession",
-        FakeAgentSession,
-    )
+    monkeypatch.setattr(worker, "AgentSession", FakeAgentSession)
 
-    worker.build_agent_session(settings, expected_vad)
+    worker.build_agent_session(
+        SimpleNamespace(),
+        expected_vad,
+    )
 
     assert captured["turn_detection"] == "manual"
     assert captured["stt"] is expected_stt
@@ -77,6 +64,46 @@ def test_build_agent_session_uses_manual_turn_detection(monkeypatch):
     assert captured["llm"] is expected_llm
     assert captured["tts"] is expected_tts
     assert captured["allow_interruptions"] is False
+
+
+def test_build_agent_session_passes_response_handler(monkeypatch):
+    provider = object()
+    vad = object()
+    handler = lambda answer: f"Processed: {answer}"
+    captured = {}
+
+    monkeypatch.setattr(
+        worker,
+        "DeepgramService",
+        lambda settings: SimpleNamespace(stt=object()),
+    )
+    monkeypatch.setattr(
+        worker,
+        "CartesiaService",
+        lambda settings: SimpleNamespace(tts=object()),
+    )
+
+    class FakeLiveKitLLM:
+        def __init__(self, actual_provider, **kwargs):
+            captured["provider"] = actual_provider
+            captured.update(kwargs)
+
+    class FakeAgentSession:
+        def __init__(self, **kwargs):
+            captured["session"] = kwargs
+
+    monkeypatch.setattr(worker, "LiveKitLLM", FakeLiveKitLLM)
+    monkeypatch.setattr(worker, "AgentSession", FakeAgentSession)
+
+    worker.build_agent_session(
+        SimpleNamespace(),
+        vad,
+        llm_provider=provider,
+        response_handler=handler,
+    )
+
+    assert captured["provider"] is provider
+    assert captured["response_handler"] is handler
 
 
 def test_build_worker_options_uses_livekit_credentials():
@@ -99,11 +126,7 @@ def test_build_worker_options_uses_livekit_credentials():
 
 @pytest.mark.asyncio
 async def test_entrypoint_connects_before_creating_publisher(monkeypatch):
-    settings = SimpleNamespace(
-        silence_timeout_seconds=10,
-        opening_message="Hello! Welcome to your interview.",
-    )
-
+    settings = SimpleNamespace(silence_timeout_seconds=10)
     monkeypatch.setattr(
         worker.Settings,
         "from_environment",
@@ -112,18 +135,18 @@ async def test_entrypoint_connects_before_creating_publisher(monkeypatch):
 
     fake_vad = object()
     local_participant = object()
+    opening = "Welcome. Please introduce yourself."
 
     class FakeRoom:
+        name = "interview-test-room"
+
         def __init__(self):
             self.connected = False
 
         @property
         def local_participant(self):
             if not self.connected:
-                raise RuntimeError(
-                    "cannot access local participant before connecting"
-                )
-
+                raise RuntimeError("Room is not connected.")
             return local_participant
 
     class FakeSpeechHandle:
@@ -142,24 +165,31 @@ async def test_entrypoint_connects_before_creating_publisher(monkeypatch):
 
         async def start(self, **kwargs):
             self.start_arguments = kwargs
-
-            # Simulate AgentSession connecting to LiveKit.
             kwargs["room"].connected = True
             self.started = True
 
         def say(self, text, *, allow_interruptions):
             self.spoken_text = text
-
             assert allow_interruptions is False
-
             return self.speech_handle
 
     fake_session = FakeSession()
+    runtime_handler = lambda answer: f"Next: {answer}"
 
+    class FakeRuntime:
+        def __init__(self, *, room_name, llm_provider):
+            assert room_name == "interview-test-room"
+            self.process_candidate_answer = runtime_handler
+
+        def start(self):
+            return opening
+
+    monkeypatch.setattr(worker, "LLMProvider", lambda settings: object())
+    monkeypatch.setattr(worker, "InterviewRuntimeService", FakeRuntime)
     monkeypatch.setattr(
         worker,
         "build_agent_session",
-        lambda settings, vad: fake_session,
+        lambda settings, vad, **kwargs: fake_session,
     )
 
     publisher_instances = []
@@ -178,10 +208,28 @@ async def test_entrypoint_connects_before_creating_publisher(monkeypatch):
         async def close(self):
             pass
 
+    monkeypatch.setattr(worker, "LiveKitEventPublisher", FakePublisher)
+
+    recorder_instances = []
+
+    class FakeRecorder:
+        def __init__(self, *, room_name):
+            self.room_name = room_name
+            recorder_instances.append(self)
+
+        def record_candidate_transcript(self, text, is_final):
+            pass
+
+        def record_conversation_item(self, event):
+            pass
+
+        def close(self):
+            pass
+
     monkeypatch.setattr(
         worker,
-        "LiveKitEventPublisher",
-        FakePublisher,
+        "InterviewTranscriptRecorder",
+        FakeRecorder,
     )
 
     controller_arguments = {}
@@ -202,58 +250,58 @@ async def test_entrypoint_connects_before_creating_publisher(monkeypatch):
     class FakeContext:
         def __init__(self):
             self.room = FakeRoom()
-
-            self.proc = SimpleNamespace(
-                userdata={"vad": fake_vad}
-            )
-
-            self.connect_calls = 0
+            self.proc = SimpleNamespace(userdata={"vad": fake_vad})
             self.shutdown_callbacks = []
-
-        async def connect(self):
-            self.connect_calls += 1
 
         def add_shutdown_callback(self, callback):
             self.shutdown_callbacks.append(callback)
 
     ctx = FakeContext()
-
     await worker.entrypoint(ctx)
 
-    # No separate ctx.connect() call is required.
-    assert ctx.connect_calls == 0
-
-    # AgentSession.start() must connect the room.
     assert fake_session.started is True
     assert fake_session.start_arguments["room"] is ctx.room
-    assert fake_session.start_arguments["agent"] is not None
-
-    # Publisher must be created after the room connects.
-    assert len(publisher_instances) == 1
-    assert publisher_instances[0].participant is local_participant
-
-    # Verify controller configuration.
-    assert controller_arguments["session"] is fake_session
-
-    assert controller_arguments["silence_timeout_seconds"] == 10
-
-    assert controller_arguments["on_status"] == (
-        publisher_instances[0].publish_status
-    )
-
-    assert controller_arguments["on_transcript"] == (
-        publisher_instances[0].publish_transcript
-    )
-
-    # Verify the opening introduction is spoken.
-    assert fake_session.spoken_text == settings.opening_message
+    assert fake_session.spoken_text == opening
     assert fake_session.speech_handle.playout_completed is True
 
-    # Both resources must register shutdown callbacks.
-    assert len(ctx.shutdown_callbacks) == 2
+    assert len(publisher_instances) == 1
+    assert publisher_instances[0].participant is local_participant
+    assert len(recorder_instances) == 1
+    assert recorder_instances[0].room_name == ctx.room.name
+
+    assert controller_arguments["session"] is fake_session
+    assert controller_arguments["silence_timeout_seconds"] == 10
+    assert controller_arguments["on_candidate_transcript"] == (
+        recorder_instances[0].record_candidate_transcript
+    )
+    assert controller_arguments["on_conversation_item"] == (
+        recorder_instances[0].record_conversation_item
+    )
+
+    # Controller, publisher and transcript recorder all need cleanup.
+    assert len(ctx.shutdown_callbacks) == 3
+
+
+@pytest.mark.asyncio
+async def test_entrypoint_rejects_missing_room_name(monkeypatch):
+    monkeypatch.setattr(
+        worker.Settings,
+        "from_environment",
+        staticmethod(lambda: SimpleNamespace()),
+    )
+
+    class FakeRoom:
+        name = None
+
+    ctx = SimpleNamespace(
+        room=FakeRoom(),
+        proc=SimpleNamespace(userdata={"vad": object()}),
+    )
+
+    with pytest.raises(RuntimeError, match="room name"):
+        await worker.entrypoint(ctx)
 
 
 def test_create_interviewer_agent_has_instructions():
     agent = worker.create_interviewer_agent()
-
     assert agent is not None

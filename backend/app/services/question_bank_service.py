@@ -1,21 +1,17 @@
-
 import random
 
 from app.repositories.question_bank_repository import (
-    QuestionBankRepository
+    QuestionBankRepository,
 )
 
 
 class QuestionBankService:
-
     VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
     def __init__(self, db):
-
         self.repository = QuestionBankRepository(db)
 
     def get_available_roles(self):
-
         roles = self.repository.get_all_roles()
 
         return [
@@ -24,15 +20,13 @@ class QuestionBankService:
                 "role_name": role.role_name,
                 "role_details": role.role_details,
                 "technologies": [
-                    tech.technology
-                    for tech in role.technologies
-                ]
+                    tech.technology for tech in role.technologies
+                ],
             }
             for role in roles
         ]
 
     def get_role_details(self, role_name):
-
         role = self.repository.get_role_by_name(role_name)
 
         if role is None:
@@ -45,18 +39,16 @@ class QuestionBankService:
             "role_name": role.role_name,
             "role_details": role.role_details,
             "technologies": [
-                tech.technology
-                for tech in role.technologies
+                tech.technology for tech in role.technologies
             ],
             "question_counts": {
                 "easy": counts.get("easy", 0),
                 "medium": counts.get("medium", 0),
-                "hard": counts.get("hard", 0)
-            }
+                "hard": counts.get("hard", 0),
+            },
         }
 
     def get_questions(self, role_name, difficulty):
-
         difficulty = difficulty.lower()
 
         if difficulty not in self.VALID_DIFFICULTIES:
@@ -69,32 +61,23 @@ class QuestionBankService:
 
         questions = self.repository.get_questions_by_difficulty(
             role.id,
-            difficulty
+            difficulty,
         )
 
         return [
             {
                 "id": question.id,
                 "question": question.question_text,
-                "difficulty": question.difficulty
+                "difficulty": question.difficulty,
             }
             for question in questions
         ]
 
-    def select_random_questions(
-        self,
-        role_name,
-        difficulty,
-        count=1
-    ):
-
+    def select_random_questions(self, role_name, difficulty, count=1):
         if count < 1:
             raise ValueError("Count must be at least 1.")
 
-        questions = self.get_questions(
-            role_name,
-            difficulty
-        )
+        questions = self.get_questions(role_name, difficulty)
 
         if count > len(questions):
             raise ValueError(
@@ -103,3 +86,38 @@ class QuestionBankService:
             )
 
         return random.sample(questions, count)
+
+    def select_random_unused_question(
+        self,
+        role_name,
+        difficulty,
+        excluded_ids=None,
+        rng=None,
+    ):
+        difficulty = str(difficulty).lower()
+
+        if difficulty not in self.VALID_DIFFICULTIES:
+            raise ValueError("Invalid difficulty level.")
+
+        role = self.repository.get_role_by_name(role_name)
+
+        if role is None:
+            raise ValueError("Job role not found.")
+
+        question = self.repository.get_random_unused_question(
+            role.id,
+            difficulty,
+            excluded_ids=excluded_ids,
+            rng=rng,
+        )
+
+        if question is None:
+            raise ValueError(
+                f"No unused {difficulty} questions remain for {role_name}."
+            )
+
+        return {
+            "id": question.id,
+            "question": question.question_text,
+            "difficulty": question.difficulty,
+        }

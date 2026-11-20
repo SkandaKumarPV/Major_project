@@ -1,10 +1,12 @@
-
 import logging
 
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database.resume_database import ResumeSessionLocal
-from backend.app.database.resume_models import InterviewSessionRecord
+from backend.app.database.resume_models import (
+    InterviewSessionRecord,
+    InterviewTranscriptMessage,
+)
 from backend.app.services.interview_session_service import (
     append_transcript_message,
 )
@@ -76,14 +78,35 @@ class InterviewTranscriptRecorder:
         if not isinstance(text, str) or not text.strip():
             return
 
+        normalized_text = text.strip()
+
         try:
             with self.session_factory() as db:
+                # The runtime persists its canonical turn snapshot before
+                # audio playback. LiveKit may subsequently emit the same
+                # committed conversation item, so treat an exact matching
+                # session/speaker/text record as an already-saved event.
+                existing = (
+                    db.query(InterviewTranscriptMessage)
+                    .filter(
+                        InterviewTranscriptMessage.interview_session_id
+                        == self.session_id,
+                        InterviewTranscriptMessage.speaker == speaker,
+                        InterviewTranscriptMessage.message_text
+                        == normalized_text,
+                    )
+                    .first()
+                )
+
+                if existing is not None:
+                    return
+
                 append_transcript_message(
                     db,
                     session_id=self.session_id,
                     candidate_id=self.candidate_id,
                     speaker=speaker,
-                    message_text=text,
+                    message_text=normalized_text,
                 )
 
         except Exception:
