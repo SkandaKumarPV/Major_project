@@ -6,11 +6,16 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.app.core.config import Settings
-from backend.app.services.livekit_service import LiveKitService
 from backend.app.api.guest import router as guest_router
-from backend.app.database.resume_database import initialize_resume_database
+from backend.app.api.interview_sessions import (
+    router as interview_sessions_router,
+)
 from backend.app.api.resumes import router as resumes_router
+from backend.app.core.config import Settings
+from backend.app.database.resume_database import initialize_resume_database
+from backend.app.services.livekit_service import LiveKitService
+
+
 logger = logging.getLogger("ai-interviewer-api")
 
 
@@ -34,6 +39,7 @@ async def lifespan(app: FastAPI):
     finally:
         await service.close()
 
+
 app = FastAPI(
     title="Simple AI Interviewer API",
     version="0.1.0",
@@ -51,14 +57,21 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
 app.include_router(guest_router)
 app.include_router(resumes_router)
+app.include_router(interview_sessions_router)
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
+
+# Legacy endpoints retained temporarily for the existing frontend.
+# The frontend will migrate to the authenticated interview-session API
+# in a later integration step.
 
 @app.post(
     "/api/interviews",

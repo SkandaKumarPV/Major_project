@@ -1,3 +1,4 @@
+
 from sqlalchemy import (
     Column,
     DateTime,
@@ -8,8 +9,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
-
 from sqlalchemy.orm import relationship
 
 from backend.app.database.resume_database import ResumeBase
@@ -17,18 +18,14 @@ from backend.app.database.resume_database import ResumeBase
 
 class GuestCandidate(ResumeBase):
     """
-    Represents a guest candidate.
+    Represents a temporary guest candidate.
 
-    The authentication token itself is never stored here.
-    Only its SHA-256 hash is stored.
+    Only the SHA-256 hash of the authentication token is stored.
     """
 
     __tablename__ = "guest_candidates"
 
-    id = Column(
-        String(36),
-        primary_key=True,
-    )
+    id = Column(String(36), primary_key=True)
 
     token_hash = Column(
         String(64),
@@ -60,16 +57,12 @@ class CandidateResume(ResumeBase):
     """
     Stores resume metadata and extracted information.
 
-    The original file is stored separately in private local storage.
-    storage_key is an opaque identifier, not an absolute file path.
+    The original file is stored separately in private storage.
     """
 
     __tablename__ = "candidate_resumes"
 
-    id = Column(
-        String(36),
-        primary_key=True,
-    )
+    id = Column(String(36), primary_key=True)
 
     candidate_id = Column(
         String(36),
@@ -94,20 +87,11 @@ class CandidateResume(ResumeBase):
         nullable=False,
     )
 
-    size_bytes = Column(
-        Integer,
-        nullable=False,
-    )
+    size_bytes = Column(Integer, nullable=False)
 
-    raw_text = Column(
-        Text,
-        nullable=False,
-    )
+    raw_text = Column(Text, nullable=False)
 
-    structured_data = Column(
-        JSON,
-        nullable=False,
-    )
+    structured_data = Column(JSON, nullable=False)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -143,18 +127,15 @@ class CandidateResume(ResumeBase):
 
 class InterviewSessionRecord(ResumeBase):
     """
-    Connects a candidate to an interview and optionally to a resume.
+    Persistent backend-owned interview session.
 
-    The application service must verify that the selected resume belongs
-    to the same candidate before creating this relationship.
+    This model stores interview progress and compact structured memory.
+    The full conversation transcript is stored separately.
     """
 
     __tablename__ = "interview_sessions"
 
-    id = Column(
-        String(36),
-        primary_key=True,
-    )
+    id = Column(String(36), primary_key=True)
 
     room_name = Column(
         String(255),
@@ -177,10 +158,78 @@ class InterviewSessionRecord(ResumeBase):
         index=True,
     )
 
+    # Nullable to preserve compatibility with existing interview records.
+    role_id = Column(String(100), nullable=True)
+
+    status = Column(
+        String(30),
+        nullable=False,
+        default="created",
+        server_default=text("'created'"),
+        index=True,
+    )
+
+    current_stage = Column(
+        String(80),
+        nullable=True,
+    )
+
+    current_main_question_id = Column(
+        String(100),
+        nullable=True,
+    )
+
+    # JSON lists are backend-owned state, not direct LLM instructions.
+    used_main_question_ids = Column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
+
+    follow_up_count = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+
+    completed_question_ids = Column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
+
+    completed_stages = Column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
+
+    # Compact context intended to be selectively provided to the LLM.
+    structured_memory = Column(
+        JSON,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
+    )
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.current_timestamp(),
+    )
+
+    started_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    ended_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     candidate = relationship(
@@ -191,4 +240,58 @@ class InterviewSessionRecord(ResumeBase):
     resume = relationship(
         "CandidateResume",
         back_populates="interviews",
+    )
+
+    transcript_messages = relationship(
+        "InterviewTranscriptMessage",
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        order_by="InterviewTranscriptMessage.sequence_number",
+    )
+
+
+class InterviewTranscriptMessage(ResumeBase):
+    """
+    Stores one ordered transcript message belonging to an interview.
+
+    This table is deliberately separate from structured interview memory.
+    """
+
+    __tablename__ = "interview_transcript_messages"
+
+    id = Column(String(36), primary_key=True)
+
+    interview_session_id = Column(
+        String(36),
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    sequence_number = Column(Integer, nullable=False)
+
+    speaker = Column(
+        String(20),
+        nullable=False,
+    )
+
+    message_text = Column(Text, nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.current_timestamp(),
+    )
+
+    interview = relationship(
+        "InterviewSessionRecord",
+        back_populates="transcript_messages",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "interview_session_id",
+            "sequence_number",
+            name="uq_transcript_session_sequence",
+        ),
     )

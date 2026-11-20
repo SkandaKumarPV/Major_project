@@ -214,6 +214,41 @@ def test_transcript_callback_receives_text_and_final_flag():
     ]
 
 
+def test_final_and_interim_transcripts_are_forwarded_to_recorder():
+    session = FakeAgentSession()
+    persisted = []
+
+    controller = LiveKitSessionController(
+        session,
+        on_candidate_transcript=lambda text, is_final: persisted.append(
+            (text, is_final)
+        ),
+    )
+
+    session.emit_event(
+        "user_input_transcribed",
+        SimpleNamespace(
+            transcript="Interim answer",
+            is_final=False,
+        ),
+    )
+
+    session.emit_event(
+        "user_input_transcribed",
+        SimpleNamespace(
+            transcript="Final answer",
+            is_final=True,
+        ),
+    )
+
+    # Controller forwards both events. The recorder itself filters
+    # interim transcripts and persists only final transcripts.
+    assert persisted == [
+        ("Interim answer", False),
+        ("Final answer", True),
+    ]
+
+
 def test_agent_speaking_status_is_reported():
     session = FakeAgentSession()
 

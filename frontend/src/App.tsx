@@ -14,14 +14,31 @@ import {
 } from "./interviewProtocol";
 
 import {
-  createInterview,
-  dispatchInterviewer,
-  deleteInterview,
-} from "./interviewApi";
+  createPersistentInterview,
+  dispatchPersistentInterview,
+  endPersistentInterview,
+  ensureGuest,
+  getInterviewTranscript,
+  getResumeStatus,
+  listInterviewSessions,
+  replaceResume,
+  uploadResume,
+  type InterviewSession,
+  type ResumeStatus,
+  type TranscriptMessage,
+} from "./persistentInterviewApi";
 
 import "./App.css";
+import "./PersistentInterview.css";
 
 const TRANSCRIPTION_TOPIC = "lk.transcription";
+
+const AVAILABLE_ROLES = [
+  {
+    id: "generative_ai_engineer",
+    name: "Generative AI Engineer",
+  },
+];
 
 type TranscriptSpeaker = "AI INTERVIEWER" | "CANDIDATE";
 
@@ -38,21 +55,123 @@ interface InterimTranscript {
 
 function App() {
   const roomRef = useRef<Room | null>(null);
-  const roomNameRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
   const transcriptIdRef = useRef(0);
   const latestStatusRef = useRef<InterviewStatus | null>(null);
 
+  const [guestReady, setGuestReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const [resume, setResume] = useState<ResumeStatus | null>(null);
+  const [resumeBusy, setResumeBusy] = useState(false);
+
+  const [selectedRole, setSelectedRole] = useState(
+    AVAILABLE_ROLES[0].id,
+  );
+
+  const [sessions, setSessions] = useState<InterviewSession[]>([]);
+  const [historyTranscript, setHistoryTranscript] =
+    useState<TranscriptMessage[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] =
+    useState<string | null>(null);
+
   const [connected, setConnected] = useState(false);
   const [starting, setStarting] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [status, setStatus] = useState<InterviewStatus>("INITIALIZING");
+
+  const [status, setStatus] =
+    useState<InterviewStatus>("INITIALIZING");
+
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [audioNeedsGesture, setAudioNeedsGesture] = useState(false);
+
   const [transcripts, setTranscripts] = useState<TranscriptLine[]>([]);
   const [interimTranscript, setInterimTranscript] =
     useState<InterimTranscript | null>(null);
+
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function refreshSessions() {
+    const result = await listInterviewSessions();
+    setSessions(result);
+  }
+
+  async function initializeApplication() {
+    setLoading(true);
+    setError("");
+
+    try {
+      await ensureGuest();
+      setGuestReady(true);
+
+      const resumeStatus = await getResumeStatus();
+      setResume(resumeStatus);
+
+      await refreshSessions();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to initialize the application.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void initializeApplication();
+
+    return () => {
+      const room = roomRef.current;
+      roomRef.current = null;
+
+      if (room) {
+        room.unregisterTextStreamHandler(TRANSCRIPTION_TOPIC);
+        void room.disconnect();
+      }
+    };
+  }, []);
+
+  async function handleResumeUpload(file?: File) {
+    if (!file || resumeBusy) return;
+
+    const allowedExtensions = [".pdf", ".doc", ".docx"];
+    const fileName = file.name.toLowerCase();
+
+    if (!allowedExtensions.some((extension) => fileName.endsWith(extension))) {
+      setError("Please upload a PDF, DOC or DOCX resume.");
+      return;
+    }
+
+    setResumeBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = resume?.uploaded
+        ? await replaceResume(file)
+        : await uploadResume(file);
+
+      setResume(result);
+
+      setNotice(
+        resume?.uploaded
+          ? "Resume replaced successfully."
+          : "Resume uploaded successfully.",
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to upload the resume.",
+      );
+    } finally {
+      setResumeBusy(false);
+    }
+  }
 
   async function applyMicrophoneStatus(nextStatus: InterviewStatus) {
     const room = roomRef.current;
@@ -68,6 +187,7 @@ function App() {
       }
     } catch (err) {
       setMicrophoneEnabled(false);
+
       setError(
         err instanceof Error
           ? `Microphone error: ${err.message}`
@@ -80,11 +200,10 @@ function App() {
     const event = parseInterviewEvent(payload, topic);
     if (!event) return;
 
-    // Custom data events continue to control interview status.
-    // Transcripts are received separately through LiveKit text streams.
     if (event.type === "status") {
       latestStatusRef.current = event.status;
       setStatus(event.status);
+
       void applyMicrophoneStatus(event.status);
 
       if (event.status === "ERROR") {
@@ -100,19 +219,14 @@ function App() {
         try {
           const text = (await reader.readAll()).trim();
 
-          if (!text || roomRef.current !== room) {
-            return;
-          }
+          if (!text || roomRef.current !== room) return;
 
           const attributes = reader.info.attributes ?? {};
 
-          // Ignore ordinary text messages. We only want speech transcripts.
           const isTranscription =
             attributes["lk.transcribed_track_id"] !== undefined;
 
-          if (!isTranscription) {
-            return;
-          }
+          if (!isTranscription) return;
 
           const isFinal =
             attributes["lk.transcription_final"] === "true";
@@ -134,10 +248,7 @@ function App() {
 
             setInterimTranscript(null);
           } else {
-            setInterimTranscript({
-              speaker,
-              text,
-            });
+            setInterimTranscript({ speaker, text });
           }
         } catch (err) {
           console.error("Failed to read interview transcription:", err);
@@ -152,28 +263,48 @@ function App() {
     const element = track.attach();
     element.autoplay = true;
     element.setAttribute("playsinline", "true");
+
     audioContainerRef.current?.appendChild(element);
   }
 
   async function startInterview() {
-    if (starting || roomRef.current) return;
+    if (starting || roomRef.current || !guestReady) return;
+
+    if (!resume?.uploaded || !resume.resume_id) {
+      setError("Upload your resume before starting an interview.");
+      return;
+    }
+
+    if (!selectedRole) {
+      setError("Select an interview role.");
+      return;
+    }
 
     setStarting(true);
     setError("");
+    setNotice("");
+
     setTranscripts([]);
     setInterimTranscript(null);
+    setHistoryTranscript([]);
+    setSelectedHistoryId(null);
+
     transcriptIdRef.current = 0;
     setMicrophoneEnabled(false);
     setStatus("INITIALIZING");
     latestStatusRef.current = null;
 
     let room: Room | null = null;
-    let createdRoomName: string | null = null;
+    let createdSessionId: string | null = null;
 
     try {
-      const session = await createInterview();
-      createdRoomName = session.room_name;
-      roomNameRef.current = session.room_name;
+      const session = await createPersistentInterview({
+        role_id: selectedRole,
+        resume_id: resume.resume_id,
+      });
+
+      createdSessionId = session.id;
+      sessionIdRef.current = session.id;
 
       room = new Room({
         adaptiveStream: true,
@@ -207,13 +338,13 @@ function App() {
         setInterimTranscript(null);
       });
 
-      // Register the transcription handler before joining the room.
       registerTranscriptionHandler(room);
 
       await room.connect(session.livekit_url, session.token);
 
-      // Always start with the candidate microphone disabled.
+      // Do not enable the candidate microphone automatically.
       await room.localParticipant.setMicrophoneEnabled(false);
+
       setMicrophoneEnabled(false);
       setConnected(true);
 
@@ -224,22 +355,30 @@ function App() {
         setAudioNeedsGesture(true);
       }
 
-      // Dispatch only after the candidate has joined the room.
-      await dispatchInterviewer(session.room_name);
+      // Dispatch the agent using the persistent session ID.
+      const dispatchResult = await dispatchPersistentInterview(session.id);
+
+      if (!dispatchResult.dispatched) {
+        throw new Error("The interviewer could not be dispatched.");
+      }
+
+      await refreshSessions();
     } catch (err) {
       if (room) {
         await room.disconnect().catch(() => undefined);
       }
 
       roomRef.current = null;
-      roomNameRef.current = null;
+      sessionIdRef.current = null;
+
       setConnected(false);
       setMicrophoneEnabled(false);
       setInterimTranscript(null);
+      setAudioNeedsGesture(false);
 
-      if (createdRoomName) {
+      if (createdSessionId) {
         try {
-          await deleteInterview(createdRoomName);
+          await endPersistentInterview(createdSessionId);
         } catch {
           // Preserve the original startup error.
         }
@@ -278,10 +417,11 @@ function App() {
     setError("");
 
     const room = roomRef.current;
-    const roomName = roomNameRef.current;
+    const sessionId = sessionIdRef.current;
 
     roomRef.current = null;
-    roomNameRef.current = null;
+    sessionIdRef.current = null;
+
     latestStatusRef.current = "INTERVIEW_ENDED";
 
     if (room) {
@@ -303,14 +443,16 @@ function App() {
 
     audioContainerRef.current?.replaceChildren();
 
-    if (roomName) {
+    if (sessionId) {
       try {
-        await deleteInterview(roomName);
+        await endPersistentInterview(sessionId);
+        setNotice("Interview ended and session saved.");
+        await refreshSessions();
       } catch (err) {
         setError(
           err instanceof Error
-            ? `Disconnected, but room cleanup failed: ${err.message}`
-            : "Disconnected, but room cleanup failed.",
+            ? `Disconnected, but session cleanup failed: ${err.message}`
+            : "Disconnected, but session cleanup failed.",
         );
       }
     }
@@ -318,17 +460,25 @@ function App() {
     setEnding(false);
   }
 
-  useEffect(() => {
-    return () => {
-      const room = roomRef.current;
-      roomRef.current = null;
+  async function viewSavedTranscript(sessionId: string) {
+    setError("");
+    setNotice("");
+    setHistoryTranscript([]);
+    setSelectedHistoryId(sessionId);
 
-      if (room) {
-        room.unregisterTextStreamHandler(TRANSCRIPTION_TOPIC);
-        void room.disconnect();
-      }
-    };
-  }, []);
+    try {
+      const result = await getInterviewTranscript(sessionId);
+      setHistoryTranscript(result);
+    } catch (err) {
+      setSelectedHistoryId(null);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to retrieve the saved transcript.",
+      );
+    }
+  }
 
   const speakerLabel =
     status === "AI_SPEAKING"
@@ -349,10 +499,10 @@ function App() {
     <main className="dashboard">
       <header className="dashboard-header">
         <div>
-          <p className="eyebrow">LIVE INTERVIEW SESSION</p>
+          <p className="eyebrow">CAREER ARENA</p>
           <h1>AI Interviewer</h1>
           <p className="subtitle">
-            A simple voice-based interview experience.
+            Your persistent AI interview workspace.
           </p>
         </div>
 
@@ -362,119 +512,255 @@ function App() {
         </span>
       </header>
 
-      <section className="interview-card">
-        <div className="speaker-panel">
-          <div
-            className={`speaker-orb ${
-              status === "AI_SPEAKING" ? "active" : ""
-            }`}
-          >
-            <span className="speaker-icon">AI</span>
-          </div>
+      {loading ? (
+        <section className="interview-card">
+          <p>Initializing your candidate workspace...</p>
+        </section>
+      ) : (
+        <>
+          <section className="interview-card">
+            <h2>Candidate setup</h2>
 
-          <p className="speaker-label">{speakerLabel}</p>
-          <p className="status-description">
-            {status === "AI_SPEAKING"
-              ? "Please listen to the interviewer."
-              : status === "PROCESSING_ANSWER"
-                ? "Your answer is being processed."
-                : status === "CANDIDATE_LISTENING"
-                  ? "You can start speaking."
-                  : status === "WAITING_FOR_SILENCE"
-                    ? "Your answer will be submitted after 10 seconds of silence."
-                    : status === "CANDIDATE_SPEAKING"
-                      ? "The interviewer is listening."
-                      : "Start an interview to begin."}
-          </p>
-        </div>
+            <div className="session-details">
+              <div className="detail-row">
+                <span>Guest identity</span>
+                <strong>{guestReady ? "Ready" : "Not initialized"}</strong>
+              </div>
 
-        <div className="session-details">
-          <div className="detail-row">
-            <span>Connection</span>
-            <strong>
-              {connected ? "LiveKit connected" : "Not connected"}
-            </strong>
-          </div>
+              <div className="detail-row">
+                <span>Resume</span>
+                <strong className={resume?.uploaded ? "mic-on" : "mic-off"}>
+                  {resume?.uploaded ? "UPLOADED" : "REQUIRED"}
+                </strong>
+              </div>
 
-          <div className="detail-row">
-            <span>Interviewer</span>
-            <strong>{speakerLabel}</strong>
-          </div>
+              {resume?.uploaded && (
+                <div className="detail-row">
+                  <span>Current file</span>
+                  <strong>{resume.filename}</strong>
+                </div>
+              )}
+            </div>
 
-          <div className="detail-row">
-            <span>Microphone</span>
-            <strong className={microphoneEnabled ? "mic-on" : "mic-off"}>
-              {microphoneEnabled ? "ENABLED" : "DISABLED"}
-            </strong>
-          </div>
-        </div>
+            <label className="field-label" htmlFor="resume-file">
+              {resume?.uploaded ? "Replace resume" : "Upload resume"}
+            </label>
 
-        {audioNeedsGesture && connected && (
-          <button
-            className="secondary-button"
-            onClick={enableAudioPlayback}
-          >
-            Enable interviewer audio
-          </button>
-        )}
+            <input
+              id="resume-file"
+              type="file"
+              accept=".pdf,.doc,.docx"
+              disabled={resumeBusy || connected || starting}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                void handleResumeUpload(file);
+                event.currentTarget.value = "";
+              }}
+            />
 
-        <div className="controls">
-          {!connected ? (
-            <button
-              className="primary-button"
-              onClick={startInterview}
-              disabled={starting || ending}
+            {resumeBusy && <p>Processing resume...</p>}
+
+            <label className="field-label" htmlFor="role-select">
+              Interview role
+            </label>
+
+            <select
+              id="role-select"
+              value={selectedRole}
+              onChange={(event) => setSelectedRole(event.target.value)}
+              disabled={connected || starting}
             >
-              {starting ? "Starting interview..." : "Start Interview"}
-            </button>
-          ) : (
-            <button
-              className="end-button"
-              onClick={endInterview}
-              disabled={ending}
-            >
-              {ending ? "Ending..." : "End Interview"}
-            </button>
-          )}
-        </div>
+              {AVAILABLE_ROLES.map((role) => (
+                <option key={role.id} value={role.id}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
 
-        {error && <p className="error-message">{error}</p>}
-      </section>
-
-      <section className="transcript-card">
-        <div className="transcript-heading">
-          <div>
-            <p className="eyebrow">CONVERSATION</p>
-            <h2>Transcript</h2>
-          </div>
-
-          <span>{transcripts.length} final segments</span>
-        </div>
-
-        <div className="transcript-content" aria-live="polite">
-          {transcripts.length === 0 && !interimTranscript && (
-            <p className="empty-transcript">
-              The AI interviewer's and candidate's speech will appear here.
+            <p className="subtitle">
+              Your resume is mandatory for every interview.
             </p>
-          )}
+          </section>
 
-          {transcripts.map((line) => (
-            <div className="transcript-line" key={line.id}>
-              <strong>
-                {line.speaker}
-              </strong>
-              <p>{line.text}</p>
-            </div>
-          ))}
+          <section className="interview-card">
+            <div className="speaker-panel">
+              <div
+                className={`speaker-orb ${
+                  status === "AI_SPEAKING" ? "active" : ""
+                }`}
+              >
+                <span className="speaker-icon">AI</span>
+              </div>
 
-          {interimTranscript && (
-            <div className="transcript-line interim">
-              <strong>{interimTranscript.speaker}</strong>
-              <p>{interimTranscript.text}</p>
+              <p className="speaker-label">{speakerLabel}</p>
+
+              <p className="status-description">
+                {status === "AI_SPEAKING"
+                  ? "Please listen to the interviewer."
+                  : status === "PROCESSING_ANSWER"
+                    ? "Your answer is being processed."
+                    : status === "CANDIDATE_LISTENING"
+                      ? "You can start speaking."
+                      : status === "WAITING_FOR_SILENCE"
+                        ? "Your answer will be submitted after 10 seconds of silence."
+                        : status === "CANDIDATE_SPEAKING"
+                          ? "The interviewer is listening."
+                          : "Start an interview to begin."}
+              </p>
             </div>
-          )}
-        </div>
-      </section>
+
+            <div className="session-details">
+              <div className="detail-row">
+                <span>Connection</span>
+                <strong>
+                  {connected ? "LiveKit connected" : "Not connected"}
+                </strong>
+              </div>
+
+              <div className="detail-row">
+                <span>Microphone</span>
+                <strong className={microphoneEnabled ? "mic-on" : "mic-off"}>
+                  {microphoneEnabled ? "ENABLED" : "DISABLED"}
+                </strong>
+              </div>
+            </div>
+
+            {audioNeedsGesture && connected && (
+              <button
+                className="secondary-button"
+                onClick={enableAudioPlayback}
+              >
+                Enable interviewer audio
+              </button>
+            )}
+
+            <div className="controls">
+              {!connected ? (
+                <button
+                  className="primary-button"
+                  onClick={startInterview}
+                  disabled={
+                    starting ||
+                    ending ||
+                    !guestReady ||
+                    !resume?.uploaded
+                  }
+                >
+                  {starting ? "Starting interview..." : "Start Interview"}
+                </button>
+              ) : (
+                <button
+                  className="end-button"
+                  onClick={endInterview}
+                  disabled={ending}
+                >
+                  {ending ? "Ending..." : "End Interview"}
+                </button>
+              )}
+            </div>
+
+            {error && <p className="error-message">{error}</p>}
+            {notice && <p className="success-message">{notice}</p>}
+          </section>
+
+          <section className="transcript-card">
+            <div className="transcript-heading">
+              <div>
+                <p className="eyebrow">LIVE CONVERSATION</p>
+                <h2>Transcript</h2>
+              </div>
+
+              <span>{transcripts.length} final segments</span>
+            </div>
+
+            <div className="transcript-content" aria-live="polite">
+              {transcripts.length === 0 && !interimTranscript && (
+                <p className="empty-transcript">
+                  The AI interviewer's and candidate's speech will appear here.
+                </p>
+              )}
+
+              {transcripts.map((line) => (
+                <div className="transcript-line" key={line.id}>
+                  <strong>{line.speaker}</strong>
+                  <p>{line.text}</p>
+                </div>
+              ))}
+
+              {interimTranscript && (
+                <div className="transcript-line interim">
+                  <strong>{interimTranscript.speaker}</strong>
+                  <p>{interimTranscript.text}</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="transcript-card">
+            <div className="transcript-heading">
+              <div>
+                <p className="eyebrow">PERSISTENT STORAGE</p>
+                <h2>Interview history</h2>
+              </div>
+
+              <span>{sessions.length} sessions</span>
+            </div>
+
+            {sessions.length === 0 ? (
+              <p className="empty-transcript">
+                Your previous interview sessions will appear here.
+              </p>
+            ) : (
+              <div className="history-list">
+                {sessions.map((session) => (
+                  <div className="history-item" key={session.id}>
+                    <div>
+                      <strong>
+                        {AVAILABLE_ROLES.find(
+                          (role) => role.id === session.role_id,
+                        )?.name ?? session.role_id}
+                      </strong>
+
+                      <p>
+                        {new Date(session.created_at).toLocaleString()}
+                      </p>
+
+                      <span>{session.status}</span>
+                    </div>
+
+                    <button
+                      className="secondary-button"
+                      onClick={() => void viewSavedTranscript(session.id)}
+                      disabled={connected || starting}
+                    >
+                      View transcript
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {selectedHistoryId && (
+              <div className="saved-transcript">
+                <h3>Saved transcript</h3>
+
+                {historyTranscript.length === 0 ? (
+                  <p className="empty-transcript">
+                    No saved transcript messages were found.
+                  </p>
+                ) : (
+                  historyTranscript.map((message) => (
+                    <div className="transcript-line" key={message.id}>
+                      <strong>{message.speaker.toUpperCase()}</strong>
+                      <p>{message.message_text}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </section>
+        </>
+      )}
 
       <div className="audio-container" ref={audioContainerRef} />
     </main>

@@ -1,3 +1,4 @@
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 
 class ResumeStatusResponse(BaseModel):
     uploaded: bool
+    resume_id: str | None = None
     filename: str | None = None
     status: str
 
@@ -53,8 +55,11 @@ async def read_resume_upload(file: UploadFile) -> bytes:
     return content
 
 
-@router.post("", response_model=ResumeStatusResponse,
-             status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ResumeStatusResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_resume(
     file: UploadFile = File(...),
     candidate: GuestCandidate = Depends(get_current_candidate),
@@ -83,12 +88,16 @@ async def upload_resume(
 
     return ResumeStatusResponse(
         uploaded=True,
+        resume_id=resume.id,
         filename=resume.original_filename,
         status="uploaded",
     )
 
 
-@router.get("/me", response_model=ResumeStatusResponse)
+@router.get(
+    "/me",
+    response_model=ResumeStatusResponse,
+)
 def get_resume_status(
     candidate: GuestCandidate = Depends(get_current_candidate),
     db: Session = Depends(get_resume_db),
@@ -98,18 +107,23 @@ def get_resume_status(
     if resume is None:
         return ResumeStatusResponse(
             uploaded=False,
+            resume_id=None,
             filename=None,
             status="missing",
         )
 
     return ResumeStatusResponse(
         uploaded=True,
+        resume_id=resume.id,
         filename=resume.original_filename,
         status="uploaded",
     )
 
 
-@router.put("/me", response_model=ResumeStatusResponse)
+@router.put(
+    "/me",
+    response_model=ResumeStatusResponse,
+)
 async def replace_candidate_resume(
     file: UploadFile = File(...),
     candidate: GuestCandidate = Depends(get_current_candidate),
@@ -132,12 +146,16 @@ async def replace_candidate_resume(
 
     return ResumeStatusResponse(
         uploaded=True,
+        resume_id=resume.id,
         filename=resume.original_filename,
         status="uploaded",
     )
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 def remove_candidate_resume(
     candidate: GuestCandidate = Depends(get_current_candidate),
     db: Session = Depends(get_resume_db),

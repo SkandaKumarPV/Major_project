@@ -20,6 +20,9 @@ from backend.app.services.livekit_llm import LiveKitLLM
 from backend.app.services.livekit_event_publisher import (
     LiveKitEventPublisher,
 )
+from backend.app.services.interview_transcript_recorder import (
+    InterviewTranscriptRecorder,
+)
 
 
 logger = logging.getLogger("ai-interviewer")
@@ -76,7 +79,6 @@ async def entrypoint(ctx):
 
     session = build_agent_session(settings, vad)
 
-    # IMPORTANT:
     # AgentSession.start() connects the agent to the assigned room.
     # The local participant is unavailable before this completes.
     await session.start(
@@ -90,19 +92,44 @@ async def entrypoint(ctx):
         ctx.room.local_participant
     )
 
+    # Resolve the persistent interview associated with this room.
+    # Some test doubles and legacy room contexts may not expose a room name.
+    room_name = getattr(ctx.room, "name", None)
+
+    transcript_recorder = None
+
+    if room_name:
+        transcript_recorder = InterviewTranscriptRecorder(
+            room_name=room_name,
+        )
+
     controller = LiveKitSessionController(
         session=session,
         silence_timeout_seconds=settings.silence_timeout_seconds,
         transcript_timeout_seconds=2,
         on_transcript=publisher.publish_transcript,
         on_status=publisher.publish_status,
+        on_candidate_transcript=(
+            transcript_recorder.record_candidate_transcript
+            if transcript_recorder
+            else None
+        ),
+        on_conversation_item=(
+            transcript_recorder.record_conversation_item
+            if transcript_recorder
+            else None
+        ),
     )
 
     # Register cleanup callbacks.
     ctx.add_shutdown_callback(controller.close)
     ctx.add_shutdown_callback(publisher.close)
 
+    if transcript_recorder:
+        ctx.add_shutdown_callback(transcript_recorder.close)
+
     # Speak the opening introduction.
+    # The conversation_item_added event should capture this message.
     speech_handle = session.say(
         settings.opening_message,
         allow_interruptions=False,

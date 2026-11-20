@@ -13,7 +13,10 @@ from sqlalchemy.pool import StaticPool
 from backend.app.api.guest import get_current_candidate
 from backend.app.api.resumes import router
 from backend.app.database.resume_database import get_resume_db, ResumeBase
-from backend.app.database.resume_models import GuestCandidate
+from backend.app.database.resume_models import (
+    CandidateResume,
+    GuestCandidate,
+)
 from backend.app.services.guest_identity_service import hash_access_token
 from backend.app.services import resume_storage_service as storage
 from backend.app.services.resume_extraction_service import DOCX_MIME_TYPE
@@ -101,23 +104,24 @@ def test_resume_status_without_upload(client):
     assert response.status_code == 200
     assert response.json() == {
         "uploaded": False,
+        "resume_id": None,
         "filename": None,
         "status": "missing",
     }
 
 
-def test_upload_resume_returns_only_public_metadata(client):
+def test_upload_resume_returns_resume_id_and_public_metadata(client):
     response = upload_file(client)
 
     assert response.status_code == 201
 
     data = response.json()
 
-    assert data == {
-        "uploaded": True,
-        "filename": "resume.docx",
-        "status": "uploaded",
-    }
+    assert data["uploaded"] is True
+    assert isinstance(data["resume_id"], str)
+    assert data["resume_id"]
+    assert data["filename"] == "resume.docx"
+    assert data["status"] == "uploaded"
 
     response_text = response.text.lower()
 
@@ -128,6 +132,23 @@ def test_upload_resume_returns_only_public_metadata(client):
     assert "alex@example.com" not in response_text
 
 
+def test_resume_status_returns_owned_resume_id(client):
+    upload_response = upload_file(client)
+    assert upload_response.status_code == 201
+
+    uploaded_resume_id = upload_response.json()["resume_id"]
+
+    response = client.get("/api/resumes/me")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "uploaded": True,
+        "resume_id": uploaded_resume_id,
+        "filename": "resume.docx",
+        "status": "uploaded",
+    }
+
+
 def test_candidate_cannot_upload_second_resume_without_replacing(client):
     first = upload_file(client, "first.docx")
     second = upload_file(client, "second.docx")
@@ -136,9 +157,11 @@ def test_candidate_cannot_upload_second_resume_without_replacing(client):
     assert second.status_code == 409
 
 
-def test_replace_resume(client):
+def test_replace_resume_preserves_resume_id(client):
     first = upload_file(client, "first.docx")
     assert first.status_code == 201
+
+    original_resume_id = first.json()["resume_id"]
 
     response = client.put(
         "/api/resumes/me",
@@ -152,9 +175,11 @@ def test_replace_resume(client):
     )
 
     assert response.status_code == 200
+    assert response.json()["resume_id"] == original_resume_id
     assert response.json()["filename"] == "replacement.docx"
 
     status_response = client.get("/api/resumes/me")
+    assert status_response.json()["resume_id"] == original_resume_id
     assert status_response.json()["filename"] == "replacement.docx"
 
 
@@ -169,6 +194,7 @@ def test_delete_resume(client):
 
     assert status_response.status_code == 200
     assert status_response.json()["uploaded"] is False
+    assert status_response.json()["resume_id"] is None
 
 
 def test_invalid_resume_is_rejected(client):

@@ -19,12 +19,16 @@ class LiveKitSessionController:
         transcript_timeout_seconds: float = 2,
         on_transcript: Callable | None = None,
         on_status: Callable | None = None,
+        on_candidate_transcript: Callable | None = None,
+        on_conversation_item: Callable | None = None,
     ):
         self.session = session
         self.transcript_timeout_seconds = transcript_timeout_seconds
 
         self.on_transcript = on_transcript
         self.on_status = on_status
+        self.on_candidate_transcript = on_candidate_transcript
+        self.on_conversation_item = on_conversation_item
 
         self.agent_state = "initializing"
         self.user_state = "listening"
@@ -48,6 +52,11 @@ class LiveKitSessionController:
         self.session.on(
             "user_input_transcribed",
             self._on_transcript,
+        )
+
+        self.session.on(
+            "conversation_item_added",
+            self._on_conversation_item_added,
         )
 
     def _notify_status(self, status: str):
@@ -82,11 +91,24 @@ class LiveKitSessionController:
             self._notify_status("CANDIDATE_LISTENING")
 
     def _on_transcript(self, event):
+        transcript = event.transcript
+        is_final = event.is_final
+
+        # Forward interim and final transcripts to the UI publisher.
         if self.on_transcript:
-            self.on_transcript(
-                event.transcript,
-                event.is_final,
-            )
+            self.on_transcript(transcript, is_final)
+
+        # Forward both to the recorder.
+        # The recorder itself is responsible for ignoring interim text.
+        if self.on_candidate_transcript:
+            self.on_candidate_transcript(transcript, is_final)
+
+    def _on_conversation_item_added(self, event):
+        # The recorder filters conversation items by role.
+        # This allows it to save interviewer messages without
+        # duplicating candidate transcripts.
+        if self.on_conversation_item:
+            self.on_conversation_item(event)
 
     async def _commit_candidate_turn(self):
         if self.agent_state == "speaking":

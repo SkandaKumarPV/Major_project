@@ -1,3 +1,4 @@
+
 import re
 import zipfile
 
@@ -5,8 +6,12 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
+import pymupdf
+import pytesseract
 from docx import Document
+from PIL import Image
 from pypdf import PdfReader
+from pytesseract import TesseractNotFoundError
 
 
 PDF_MIME_TYPE = "application/pdf"
@@ -17,6 +22,12 @@ DOCX_MIME_TYPE = (
 )
 
 DEFAULT_MAX_RESUME_SIZE_BYTES = 5 * 1024 * 1024
+
+# Render scanned PDF pages at a resolution suitable for resume text.
+OCR_DPI = 250
+
+# Pages with fewer meaningful characters are treated as potentially scanned.
+MIN_EMBEDDED_TEXT_CHARACTERS = 20
 
 
 class ResumeExtractionError(Exception):
@@ -107,14 +118,20 @@ def validate_resume_file(
             "The resume exceeds the maximum allowed file size."
         )
 
-    extension = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    extension = (
+        filename.lower().rsplit(".", 1)[-1]
+        if "." in filename
+        else ""
+    )
 
     if extension == "pdf":
         if content_type != PDF_MIME_TYPE:
             raise ResumeExtractionError("Invalid PDF content type.")
 
         if not file_bytes.startswith(b"%PDF-"):
-            raise ResumeExtractionError("The uploaded file is not a valid PDF.")
+            raise ResumeExtractionError(
+                "The uploaded file is not a valid PDF."
+            )
 
         return "pdf"
 
@@ -139,6 +156,8 @@ def validate_resume_file(
                         "The DOCX document is corrupted."
                     )
 
+        except ResumeExtractionError:
+            raise
         except (zipfile.BadZipFile, OSError) as exc:
             raise ResumeExtractionError(
                 "The DOCX document is corrupted or unreadable."
@@ -151,33 +170,136 @@ def validate_resume_file(
     )
 
 
-def extract_pdf_text(file_bytes: bytes) -> str:
+def _needs_ocr(text: str) -> bool:
+    """
+    Determine whether a PDF page needs OCR.
+
+    This catches pages with no text layer and pages with only a very
+    small amount of extracted text, which can happen with scanned PDFs.
+    """
+
+    meaningful_characters = len(
+        re.sub(r"\s+", "", text or "")
+    )
+
+    return meaningful_characters < MIN_EMBEDDED_TEXT_CHARACTERS
+
+
+def extract_pdf_page_with_ocr(
+    file_bytes: bytes,
+    page_index: int,
+) -> str:
+    """
+    Render one PDF page and recognize its text using Tesseract OCR.
+
+    This function is called automatically only when normal PDF text
+    extraction does not produce enough meaningful text.
+    """
+
     try:
-        reader = PdfReader(BytesIO(file_bytes), strict=True)
+        with pymupdf.open(
+            stream=file_bytes,
+            filetype="pdf",
+        ) as pdf_document:
+            if page_index < 0 or page_index >= len(pdf_document):
+                raise ResumeExtractionError(
+                    "The PDF contains an invalid page."
+                )
+
+            page = pdf_document.load_page(page_index)
+
+            zoom = OCR_DPI / 72
+            matrix = pymupdf.Matrix(zoom, zoom)
+
+            pixmap = page.get_pixmap(
+                matrix=matrix,
+                alpha=False,
+            )
+
+            image_bytes = pixmap.tobytes("png")
+            image = Image.open(BytesIO(image_bytes))
+
+            return pytesseract.image_to_string(
+                image,
+                config="--psm 3",
+            ).strip()
+
+    except TesseractNotFoundError as exc:
+        raise ResumeExtractionError(
+            "This PDF appears to be scanned, but the OCR engine "
+            "is not installed or could not be found. Install Tesseract "
+            "OCR on the backend machine and try again."
+        ) from exc
+
+    except ResumeExtractionError:
+        raise
+
+    except Exception as exc:
+        raise ResumeExtractionError(
+            f"OCR could not process PDF page {page_index + 1}."
+        ) from exc
+
+
+def extract_pdf_text(file_bytes: bytes) -> str:
+    """
+    Extract text from every PDF page.
+
+    Normal embedded text is preferred. OCR is automatically used for
+    pages where embedded text is missing or insufficient.
+
+    This supports:
+    - Normal text-based PDFs.
+    - Scanned/image-based PDFs.
+    - Mixed PDFs containing both types of pages.
+    """
+
+    try:
+        reader = PdfReader(
+            BytesIO(file_bytes),
+            strict=True,
+        )
 
         if reader.is_encrypted:
             raise ResumeExtractionError(
                 "Password-protected PDFs are not supported."
             )
 
-        pages = []
+        extracted_pages = []
 
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            pages.append(page_text)
+        for page_index, page in enumerate(reader.pages):
+            page_text = (page.extract_text() or "").strip()
 
-        text = "\n".join(pages).strip()
+            if _needs_ocr(page_text):
+                ocr_text = extract_pdf_page_with_ocr(
+                    file_bytes,
+                    page_index,
+                )
+
+                # Use OCR output when available. Retain any embedded
+                # text if OCR does not find additional readable content.
+                if ocr_text:
+                    page_text = ocr_text
+                elif not page_text:
+                    page_text = ""
+
+            extracted_pages.append(page_text)
+
+        text = "\n".join(
+            page for page in extracted_pages if page
+        ).strip()
 
         if not text:
             raise ResumeExtractionError(
                 "No readable text was found in the PDF. "
-                "Scanned PDFs requiring OCR are not supported."
+                "The document may be blank, unreadable or contain "
+                "images that OCR could not recognize."
             )
 
         return text
 
     except ResumeExtractionError:
         raise
+
     except Exception as exc:
         raise ResumeExtractionError(
             "The PDF is corrupted or could not be read."
@@ -217,6 +339,7 @@ def extract_docx_text(file_bytes: bytes) -> str:
 
     except ResumeExtractionError:
         raise
+
     except Exception as exc:
         raise ResumeExtractionError(
             "The DOCX document is corrupted or could not be read."
@@ -232,7 +355,7 @@ def extract_contact_information(text: str) -> dict[str, Any]:
     )
 
     phone_match = re.search(
-        r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)",
+        r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)",
         text,
     )
 
@@ -242,9 +365,21 @@ def extract_contact_information(text: str) -> dict[str, Any]:
     )
 
     return {
-        "candidate_name": name_match.group(1).strip() if name_match else None,
-        "email": email_match.group(0) if email_match else None,
-        "phone": phone_match.group(0).strip() if phone_match else None,
+        "candidate_name": (
+            name_match.group(1).strip()
+            if name_match
+            else None
+        ),
+        "email": (
+            email_match.group(0)
+            if email_match
+            else None
+        ),
+        "phone": (
+            phone_match.group(0).strip()
+            if phone_match
+            else None
+        ),
     }
 
 
@@ -284,7 +419,7 @@ def extract_structured_data(text: str) -> dict[str, Any]:
         if current_section is None:
             continue
 
-        # Preserve the content as written, without inventing summaries.
+        # Preserve content as written without inventing summaries.
         item = re.sub(r"^[•●▪\-*]\s*", "", line).strip()
 
         if item:
